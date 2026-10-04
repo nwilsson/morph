@@ -6,7 +6,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import net.fabricmc.api.ClientModInitializer;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.entity.Entity;
@@ -21,6 +24,10 @@ import org.jspecify.annotations.Nullable;
  * player's position, rotation and movement and is ticked for its own animations (wing flaps, tentacles).
  */
 public class MorphClient implements ClientModInitializer {
+	public static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Morph.id("morph"));
+	public static final KeyMapping OPEN_SIDEBAR = KeyMappingHelper.registerKeyMapping(
+		new KeyMapping("key.morph.sidebar", InputConstants.KEY_M, CATEGORY));
+
 	private static final Map<UUID, Entity> DISGUISES = new HashMap<>();
 	private static final Map<UUID, EntityType<?>> LAST_MORPH = new HashMap<>();
 
@@ -31,6 +38,11 @@ public class MorphClient implements ClientModInitializer {
 	}
 
 	private static void tick(Minecraft minecraft) {
+		while (OPEN_SIDEBAR.consumeClick()) {
+			if (minecraft.player != null && minecraft.gui.screen() == null) {
+				minecraft.gui.setScreen(new MorphSidebarScreen());
+			}
+		}
 		ClientLevel level = minecraft.level;
 		if (level == null) {
 			DISGUISES.clear();

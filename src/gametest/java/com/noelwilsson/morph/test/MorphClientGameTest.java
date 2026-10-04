@@ -2,6 +2,9 @@ package com.noelwilsson.morph.test;
 
 import com.noelwilsson.morph.Morph;
 import com.noelwilsson.morph.MorphState;
+import com.noelwilsson.morph.client.MorphClient;
+import com.noelwilsson.morph.client.MorphSidebarScreen;
+import java.util.List;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
@@ -79,8 +82,70 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			});
 			ctx.runOnClient(mc -> checkHitbox("client", mc.player.getBbWidth(), mc.player.getBbHeight(), EntityTypes.PLAYER));
 			Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-unmorphed"));
+
+			sidebar(ctx, world);
 		}
 		Morph.LOGGER.info("MORPH-TEST PASS");
+	}
+
+	/** Unlock enough mobs to overflow the sidebar, open it with the key, scroll, and click a mob with the mouse. */
+	private static void sidebar(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			for (EntityType<?> type : List.of(EntityTypes.BAT, EntityTypes.BEE, EntityTypes.BLAZE, EntityTypes.CAT, EntityTypes.CHICKEN,
+				EntityTypes.COD, EntityTypes.COW, EntityTypes.CREEPER, EntityTypes.DOLPHIN, EntityTypes.ENDERMAN, EntityTypes.FOX,
+				EntityTypes.GHAST, EntityTypes.HORSE, EntityTypes.IRON_GOLEM, EntityTypes.PIG, EntityTypes.RABBIT, EntityTypes.SHEEP,
+				EntityTypes.SPIDER, EntityTypes.SQUID, EntityTypes.WOLF, EntityTypes.ZOMBIE)) {
+				MorphState.unlock(player, type);
+			}
+		});
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> mc.gui.toastManager().clear()); // recipe toasts cover the panel header
+
+		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
+		ctx.waitForScreen(MorphSidebarScreen.class);
+		ctx.waitTicks(5);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-top"));
+
+		// The cursor must be over the panel for the wheel to reach it.
+		double scale = ctx.computeOnClient(mc -> (double) mc.getWindow().getGuiScale());
+		int panelX = ctx.computeOnClient(mc -> ((MorphSidebarScreen) mc.gui.screen()).panelLeft()) + 40;
+		ctx.getInput().setCursorPos(panelX * scale, 100 * scale);
+		ctx.getInput().scroll(-30);
+		ctx.waitTicks(5);
+		double scrolled = ctx.computeOnClient(mc -> ((MorphSidebarScreen) mc.gui.screen()).scroll());
+		check(scrolled > 0, "sidebar didn't scroll");
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-scrolled"));
+
+		// Click the spider row, wherever scrolling left it.
+		int spiderTop = ctx.computeOnClient(mc -> {
+			MorphSidebarScreen screen = (MorphSidebarScreen) mc.gui.screen();
+			return screen.entryTop(screen.indexOf(EntityTypes.SPIDER));
+		});
+		check(spiderTop >= MorphSidebarScreen.HEADER_HEIGHT, "spider row scrolled out of view: " + spiderTop);
+		ctx.getInput().setCursorPos(panelX * scale, (spiderTop + MorphSidebarScreen.ENTRY_HEIGHT / 2.0) * scale);
+		ctx.getInput().pressMouse(0);
+		ctx.waitTicks(25);
+		world.getConnection().waitForClientboundPackets();
+		check(world.getServer().computeOnServer(s -> MorphState.current(world.getConnection().getServerPlayer())) == EntityTypes.SPIDER,
+			"clicking the spider row didn't morph into a spider");
+		check(ctx.computeOnClient(mc -> mc.gui.screen() == null), "sidebar didn't close after picking");
+
+		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
+		ctx.waitForScreen(MorphSidebarScreen.class);
+		ctx.waitTicks(5);
+		int spiderRow = ctx.computeOnClient(mc -> {
+			MorphSidebarScreen screen = (MorphSidebarScreen) mc.gui.screen();
+			return screen.entryTop(screen.indexOf(EntityTypes.SPIDER));
+		});
+		int screenHeight = ctx.computeOnClient(mc -> mc.gui.screen().height);
+		check(spiderRow >= MorphSidebarScreen.HEADER_HEIGHT && spiderRow + MorphSidebarScreen.ENTRY_HEIGHT <= screenHeight,
+			"reopened sidebar doesn't show the current morph: row at " + spiderRow);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-spider-selected"));
+		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
+		ctx.waitTicks(2);
+		check(ctx.computeOnClient(mc -> mc.gui.screen() == null), "the sidebar key didn't close the sidebar");
 	}
 
 	private static void command(TestSingleplayerContext world, String command) {
