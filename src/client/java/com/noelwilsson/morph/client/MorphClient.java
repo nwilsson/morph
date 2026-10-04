@@ -1,6 +1,8 @@
 package com.noelwilsson.morph.client;
 
 import com.noelwilsson.morph.Morph;
+import com.noelwilsson.morph.MorphPowerPayload;
+import com.noelwilsson.morph.MorphPowers;
 import com.noelwilsson.morph.MorphState;
 import java.util.HashMap;
 import java.util.Map;
@@ -9,6 +11,9 @@ import net.fabricmc.api.ClientModInitializer;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -27,6 +32,8 @@ public class MorphClient implements ClientModInitializer {
 	public static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Morph.id("morph"));
 	public static final KeyMapping OPEN_SIDEBAR = KeyMappingHelper.registerKeyMapping(
 		new KeyMapping("key.morph.sidebar", InputConstants.KEY_M, CATEGORY));
+	public static final KeyMapping USE_POWER = KeyMappingHelper.registerKeyMapping(
+		new KeyMapping("key.morph.power", InputConstants.KEY_R, CATEGORY));
 
 	private static final Map<UUID, Entity> DISGUISES = new HashMap<>();
 	private static final Map<UUID, EntityType<?>> LAST_MORPH = new HashMap<>();
@@ -34,6 +41,7 @@ public class MorphClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		ClientTickEvents.END_CLIENT_TICK.register(MorphClient::tick);
+		HudElementRegistry.attachElementAfter(VanillaHudElements.HOTBAR, Morph.id("power"), MorphPowerHud::extract);
 		Morph.LOGGER.info("Morph client loaded");
 	}
 
@@ -41,6 +49,12 @@ public class MorphClient implements ClientModInitializer {
 		while (OPEN_SIDEBAR.consumeClick()) {
 			if (minecraft.player != null && minecraft.gui.screen() == null) {
 				minecraft.gui.setScreen(new MorphSidebarScreen());
+			}
+		}
+		while (USE_POWER.consumeClick()) {
+			if (minecraft.player != null && MorphPowers.of(MorphState.current(minecraft.player)) != null
+				&& ClientPlayNetworking.canSend(MorphPowerPayload.TYPE)) {
+				ClientPlayNetworking.send(MorphPowerPayload.INSTANCE);
 			}
 		}
 		ClientLevel level = minecraft.level;
@@ -96,6 +110,9 @@ public class MorphClient implements ClientModInitializer {
 	/** Copy everything the renderer reads from the player onto the disguise. */
 	public static void sync(Player player, Entity disguise) {
 		disguise.setPos(player.getX(), player.getY(), player.getZ());
+		// Animations run on age (blaze rods spin on tickCount + partialTick). Only commonTick() advances it and the
+		// disguise is never in a level, so borrow the player's or the rods snap back every tick.
+		disguise.tickCount = player.tickCount;
 		disguise.xo = player.xo;
 		disguise.yo = player.yo;
 		disguise.zo = player.zo;

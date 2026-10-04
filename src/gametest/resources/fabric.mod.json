@@ -5,7 +5,12 @@
 	"name": "Morph tests",
 	"environment": "*",
 	"entrypoints": {
-		"fabric-client-gametest": ["com.noelwilsson.morph.test.MorphClientGameTest"]
+		"fabric-client-gametest": [
+			"com.noelwilsson.morph.test.MorphClientGameTest",
+			"com.noelwilsson.morph.test.MorphPowersGameTest"
+		]
 	},
-	"depends": {"morph": "*"}
+	"depends": {
+		"morph": "*"
+	}
 }

@@ -18,7 +18,9 @@ public final class MorphAbilities {
 		CLIMB,           // walls act like ladders
 		NIGHT_VISION,
 		JUMP,
-		SPEED
+		SPEED,
+		LAVA_WALK,       // strider
+		DRIES_OUT        // fish: suffocates out of water
 	}
 
 	private static final Map<String, Set<Ability>> TABLE = Map.ofEntries(
@@ -37,12 +39,16 @@ public final class MorphAbilities {
 		e("chicken", Ability.SLOW_FALL),
 		e("spider", Ability.CLIMB, Ability.NIGHT_VISION),
 		e("cave_spider", Ability.CLIMB, Ability.NIGHT_VISION),
-		e("cod", Ability.WATER_BREATHING, Ability.SWIM),
-		e("salmon", Ability.WATER_BREATHING, Ability.SWIM),
-		e("tropical_fish", Ability.WATER_BREATHING, Ability.SWIM),
-		e("pufferfish", Ability.WATER_BREATHING, Ability.SWIM),
-		e("squid", Ability.WATER_BREATHING, Ability.SWIM),
-		e("glow_squid", Ability.WATER_BREATHING, Ability.SWIM, Ability.NIGHT_VISION),
+		e("cod", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
+		e("salmon", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
+		e("tropical_fish", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
+		e("pufferfish", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
+		e("tadpole", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
+		e("squid", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
+		e("glow_squid", Ability.WATER_BREATHING, Ability.SWIM, Ability.NIGHT_VISION, Ability.DRIES_OUT),
+		e("strider", Ability.LAVA_WALK),
+		e("magma_cube", Ability.JUMP),
+		e("slime", Ability.JUMP),
 		e("dolphin", Ability.WATER_BREATHING, Ability.SWIM),
 		e("axolotl", Ability.WATER_BREATHING, Ability.SWIM),
 		e("guardian", Ability.WATER_BREATHING, Ability.SWIM),

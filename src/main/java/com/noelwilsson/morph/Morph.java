@@ -4,6 +4,9 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -23,6 +26,17 @@ public class Morph implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		MorphState.init();
+		MorphPowers.init();
+
+		PayloadTypeRegistry.serverboundPlay().register(MorphPowerPayload.TYPE, MorphPowerPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(MorphPowerPayload.TYPE, (payload, context) -> MorphPowers.use(context.player()));
+
+		ServerLivingEntityEvents.AFTER_DAMAGE.register((entity, source, baseDamage, damageTaken, blocked) -> {
+			// Direct hits only: a fireball's owner is the player too, but that isn't a bite or a punch.
+			if (!blocked && source.getDirectEntity() instanceof ServerPlayer player && source.getEntity() == player && entity != player) {
+				MorphPowers.onMeleeHit(player, entity);
+			}
+		});
 
 		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
 			if (entity instanceof Mob && source.getEntity() instanceof ServerPlayer player
@@ -35,9 +49,11 @@ public class Morph implements ModInitializer {
 		});
 
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			server.getPlayerList().getPlayers().forEach(MorphState::tickWeaknesses);
 			if (server.getTickCount() % 20 == 0) {
 				server.getPlayerList().getPlayers().forEach(MorphState::apply);
 			}
+			MorphPowers.tick(server);
 		});
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, context, selection) -> MorphCommands.register(dispatcher, context));
