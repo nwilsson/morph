@@ -80,6 +80,8 @@ public class MorphPowersGameTest implements FabricClientGameTest {
 			creeper(ctx, world);
 			weaknesses(ctx, world);
 			melee(ctx, world);
+			striderOnLava(ctx, world);
+			relations(ctx, world);
 		}
 		if (failures > 0) {
 			throw new AssertionError(failures + " morph power checks failed, see MORPH-TEST FAIL lines");
@@ -233,15 +235,6 @@ public class MorphPowersGameTest implements FabricClientGameTest {
 		});
 		Morph.LOGGER.info("MORPH-TEST ok cod-dry");
 
-		// Striders stand on lava; players don't.
-		stage(ctx, world, EntityTypes.STRIDER, 8.0);
-		world.getServer().runOnServer(s -> {
-			ServerPlayer p = world.getConnection().getServerPlayer();
-			check(p.canStandOnFluid(Fluids.LAVA.defaultFluidState()), "strider: can't stand on lava");
-			MorphState.unmorph(p);
-			check(!p.canStandOnFluid(Fluids.LAVA.defaultFluidState()), "unmorphed: still stands on lava");
-		});
-		Morph.LOGGER.info("MORPH-TEST ok strider-lava");
 	}
 
 	private void melee(ClientGameTestContext ctx, TestSingleplayerContext world) {
@@ -263,6 +256,118 @@ public class MorphPowersGameTest implements FabricClientGameTest {
 			check(p.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE) == 3.0,
 				"zombie: attack damage " + p.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE) + ", want 3");
 		});
+	}
+
+	/** Walk on a real lava pool as a strider, with the real movement key; sink in and float back up. */
+	private void striderOnLava(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		stage(ctx, world, EntityTypes.STRIDER, 12.0);
+		world.getServer().runCommand("fill -4 -63 -4 4 -61 8 minecraft:lava");
+		ctx.waitTicks(40);
+		double y = ctx.computeOnClient(mc -> mc.player.getY());
+		check(y > -60.6 && y < -60.4, "strider: not standing on the lava surface, y=" + y);
+		double z0 = ctx.computeOnClient(mc -> mc.player.getZ());
+		ctx.getInput().holdKeyFor(options -> options.keyUp, 20);
+		ctx.waitTicks(5);
+		double z1 = ctx.computeOnClient(mc -> mc.player.getZ());
+		double y1 = ctx.computeOnClient(mc -> mc.player.getY());
+		check(Math.abs(z1 - z0) > 2 && y1 > -60.6, "strider: couldn't walk across lava (moved " + (z1 - z0) + ", y=" + y1 + ")");
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("strider-on-lava"));
+
+		// Dropped deep into lava, it bobs back up like a strider.
+		world.getServer().runOnServer(s -> world.getConnection().getServerPlayer().teleportTo(0.5, -62.9, 0.5));
+		ctx.waitTicks(80);
+		double y2 = ctx.computeOnClient(mc -> mc.player.getY());
+		check(y2 > -60.7, "strider: didn't float up out of lava, y=" + y2);
+		check(world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().getHealth()
+			== world.getConnection().getServerPlayer().getMaxHealth()), "strider: hurt by lava");
+
+		// Unmorphed, lava is lava again.
+		world.getServer().runOnServer(s -> {
+			ServerPlayer p = world.getConnection().getServerPlayer();
+			MorphState.unmorph(p);
+			p.addEffect(new net.minecraft.world.effect.MobEffectInstance(MobEffects.FIRE_RESISTANCE, 200));
+			p.teleportTo(0.5, -60.4, 0.5);
+		});
+		ctx.waitTicks(30);
+		double y3 = ctx.computeOnClient(mc -> mc.player.getY());
+		check(y3 < -60.7, "unmorphed: still standing on lava, y=" + y3);
+		Morph.LOGGER.info("MORPH-TEST ok strider-lava");
+		world.getServer().runCommand("fill -4 -63 -4 4 -62 8 minecraft:dirt");
+		world.getServer().runCommand("fill -4 -61 -4 4 -61 8 minecraft:grass_block");
+	}
+
+	/** Monsters ignore monster morphs until hit; village golems hunt them; creepers flee cats. */
+	private void relations(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		world.getServer().runCommand("time set midnight"); // undead mustn't burn mid-test
+
+		// Control: an unmorphed player is attacked.
+		stage(ctx, world, EntityTypes.PIG, 15.0);
+		world.getServer().runOnServer(s -> MorphState.unmorph(world.getConnection().getServerPlayer()));
+		spawn(world, EntityTypes.ZOMBIE, 4);
+		ctx.waitTicks(40);
+		check(targetOf(world, EntityTypes.ZOMBIE) == Target.PLAYER, "control: zombie didn't target an unmorphed player");
+
+		// As a zombie: ignored.
+		stage(ctx, world, EntityTypes.ZOMBIE, 15.0);
+		spawn(world, EntityTypes.ZOMBIE, 4);
+		spawn(world, EntityTypes.SKELETON, -4);
+		ctx.waitTicks(60);
+		check(targetOf(world, EntityTypes.ZOMBIE) != Target.PLAYER, "zombie morph: zombie still targets the player");
+		check(targetOf(world, EntityTypes.SKELETON) != Target.PLAYER, "zombie morph: skeleton still targets the player");
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("zombie-among-monsters"));
+
+		// Hit it, and it fights back.
+		world.getServer().runOnServer(s -> {
+			ServerPlayer p = world.getConnection().getServerPlayer();
+			p.attack(p.level().getEntities(EntityTypes.ZOMBIE, p.getBoundingBox().inflate(16), e -> true).getFirst());
+		});
+		ctx.waitTicks(20);
+		check(targetOf(world, EntityTypes.ZOMBIE) == Target.PLAYER, "zombie morph: provoked zombie didn't fight back");
+		Morph.LOGGER.info("MORPH-TEST ok monsters-ignore");
+
+		// Village iron golem hunts a zombie-morphed player.
+		stage(ctx, world, EntityTypes.ZOMBIE, 15.0);
+		spawn(world, EntityTypes.IRON_GOLEM, 6);
+		ctx.waitTicks(60);
+		check(targetOf(world, EntityTypes.IRON_GOLEM) == Target.PLAYER, "zombie morph: iron golem ignores the player");
+		Morph.LOGGER.info("MORPH-TEST ok golem-hunts");
+
+		// Creepers back away from a cat.
+		stage(ctx, world, EntityTypes.CAT, 15.0);
+		spawn(world, EntityTypes.CREEPER, 3);
+		ctx.waitTicks(5);
+		double before = world.getServer().computeOnServer(s -> distanceTo(world, EntityTypes.CREEPER));
+		ctx.waitTicks(60);
+		double after = world.getServer().computeOnServer(s -> distanceTo(world, EntityTypes.CREEPER));
+		check(after > before + 1.5, "cat morph: creeper didn't flee (" + before + " -> " + after + ")");
+		Morph.LOGGER.info("MORPH-TEST ok creeper-flees-cat");
+		world.getServer().runCommand("time set noon");
+	}
+
+	private enum Target { NONE, PLAYER, OTHER }
+
+	private static void spawn(TestSingleplayerContext world, EntityType<? extends Mob> type, double dz) {
+		world.getServer().runOnServer(s -> {
+			ServerPlayer p = world.getConnection().getServerPlayer();
+			Mob mob = type.create(p.level(), EntitySpawnReason.COMMAND);
+			mob.setPos(START.x, START.y, START.z + dz);
+			mob.setPersistenceRequired();
+			p.level().addFreshEntity(mob);
+		});
+	}
+
+	private static Target targetOf(TestSingleplayerContext world, EntityType<? extends Mob> type) {
+		return world.getServer().computeOnServer(s -> {
+			ServerPlayer p = world.getConnection().getServerPlayer();
+			Mob mob = p.level().getEntities(type, p.getBoundingBox().inflate(20), e -> true).getFirst();
+			LivingEntity target = mob.getTarget();
+			return target == null ? Target.NONE : target == p ? Target.PLAYER : Target.OTHER;
+		});
+	}
+
+	private static double distanceTo(TestSingleplayerContext world, EntityType<?> type) {
+		ServerPlayer p = world.getConnection().getServerPlayer();
+		return p.level().getEntities(type, p.getBoundingBox().inflate(30), e -> true).getFirst().distanceTo(p);
 	}
 
 	private static String around(TestSingleplayerContext world) {
