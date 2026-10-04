@@ -1,0 +1,34 @@
+{
+	"schemaVersion": 1,
+	"id": "morph",
+	"version": "${version}",
+	"name": "Morph",
+	"description": "Kill a mob, then morph into it: its body, its health, its abilities.",
+	"authors": [
+		"Noel Wilsson"
+	],
+	"license": "MIT",
+	"icon": "assets/morph/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.noelwilsson.morph.Morph"
+		],
+		"client": [
+			"com.noelwilsson.morph.client.MorphClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	},
+	"mixins": [
+		"morph.mixins.json",
+		{
+			"config": "morph.client.mixins.json",
+			"environment": "client"
+		}
+	]
+}

@@ -1,0 +1,11 @@
+{
+	"schemaVersion": 1,
+	"id": "morph-test",
+	"version": "1.0.0",
+	"name": "Morph tests",
+	"environment": "*",
+	"entrypoints": {
+		"fabric-client-gametest": ["com.noelwilsson.morph.test.MorphClientGameTest"]
+	},
+	"depends": {"morph": "*"}
+}
