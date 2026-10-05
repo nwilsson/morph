@@ -5,6 +5,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.noelwilsson.morph.mixin.MobAccessor;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
@@ -29,6 +30,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.projectile.EvokerFangs;
 import net.minecraft.world.entity.projectile.LlamaSpit;
@@ -53,6 +55,10 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.ExplosionDamageCalculator;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.Explosion;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LevelEvent;
+import net.minecraft.world.level.storage.loot.BuiltInLootTables;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -197,15 +203,10 @@ public final class MorphPowers {
 			l.sendParticles(ParticleTypes.POOF, p.getX(), p.getY() + 1, p.getZ(), 40, 2, 0.5, 2, 0.1);
 			return sound(p, l, SoundEvents.RAVAGER_ROAR);
 		});
-		power("iron_golem", "Toss", 20, (p, l) -> {
-			LivingEntity target = target(p, 4);
-			if (target == null) {
-				return fail(p, "Nothing in reach");
-			}
-			target.hurtServer(l, p.damageSources().mobAttack(p), 10.0F);
-			knock(target, 0, 0.8, 0);
-			return sound(p, l, SoundEvents.IRON_GOLEM_ATTACK);
-		});
+		power("iron_golem", "Toss", 20, (p, l) -> toss(p, l, 10.0F, SoundEvents.IRON_GOLEM_ATTACK));
+		// Hoglins throw what they hit into the air (Hoglin.throwTarget).
+		power("hoglin", "Toss", 40, (p, l) -> toss(p, l, attackDamage(p), SoundEvents.HOGLIN_ATTACK));
+		power("zoglin", "Toss", 40, (p, l) -> toss(p, l, attackDamage(p), SoundEvents.ZOGLIN_ATTACK));
 		power("armadillo", "Roll up", 200, (p, l) -> {
 			p.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, 100, 3));
 			p.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 100, 3));
@@ -223,6 +224,89 @@ public final class MorphPowers {
 			Vec3 pull = p.position().subtract(target.position()).normalize().scale(1.2);
 			knock(target, pull.x, 0.3, pull.z);
 			return sound(p, l, SoundEvents.FROG_TONGUE);
+		});
+
+		// Pounce: LeapAtTargetGoal, at whatever you're looking at (or straight ahead), a bit stronger than the mob's own.
+		Action pounce = (p, l) -> leap(p, l, 1.0, 0.45, true);
+		for (String mob : List.of("wolf", "cat", "ocelot", "spider", "cave_spider")) {
+			power(mob, "Pounce", 40, pounce);
+		}
+		// Foxes pounce high, onto prey from above (FoxPounceGoal).
+		power("fox", "Pounce", 40, (p, l) -> leap(p, l, 0.8, 0.9, true));
+		// Horses: the charged jump, forward and up.
+		Action horseLeap = (p, l) -> leap(p, l, 1.2, 0.9, false);
+		for (String mob : List.of("horse", "donkey", "mule", "skeleton_horse", "zombie_horse")) {
+			power(mob, "Leap", 40, horseLeap);
+		}
+		power("dolphin", "Dash", 40, (p, l) -> {
+			if (!p.isInWater()) {
+				return fail(p, "Only in water");
+			}
+			setMotion(p, p.getLookAngle().scale(1.8));
+			return sound(p, l, SoundEvents.DOLPHIN_JUMP);
+		});
+		power("turtle", "Shell", 200, (p, l) -> {
+			p.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, 100, 2));
+			p.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 100, 2));
+			return sound(p, l, SoundEvents.ARMOR_EQUIP_TURTLE.value());
+		});
+		Action crossbow = (p, l) -> arrow(p, l, null, 3.15F, SoundEvents.CROSSBOW_SHOOT);
+		power("pillager", "Crossbow", 25, crossbow);
+		power("piglin", "Crossbow", 25, crossbow);
+		// The illusioner's two spells: turn invisible, blind whoever is near.
+		power("illusioner", "Mirror image", 200, (p, l) -> {
+			p.addEffect(new MobEffectInstance(MobEffects.INVISIBILITY, 100, 0));
+			for (LivingEntity e : nearby(p, l, 8.0)) {
+				e.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, 100, 0), p);
+			}
+			l.sendParticles(ParticleTypes.CLOUD, p.getX(), p.getY() + 1, p.getZ(), 30, 0.6, 0.8, 0.6, 0.02);
+			return sound(p, l, SoundEvents.ILLUSIONER_MIRROR_MOVE);
+		});
+		// Phantoms swoop and vexes charge: fly the way you look and hit what's in the path.
+		power("phantom", "Swoop", 40, (p, l) -> charge(p, l, p.getLookAngle(), 1.6, attackDamage(p), 1.0, SoundEvents.PHANTOM_SWOOP));
+		power("vex", "Charge", 40, (p, l) -> charge(p, l, p.getLookAngle(), 1.4, attackDamage(p), 0.8, SoundEvents.VEX_CHARGE));
+		power("polar_bear", "Swipe", 30, (p, l) -> {
+			Vec3 look = flatLook(p);
+			AABB front = p.getBoundingBox().expandTowards(look.scale(2.5)).inflate(0.5);
+			List<Entity> hit = l.getEntities(p, front, e -> e instanceof LivingEntity && e.isAlive());
+			if (hit.isEmpty()) {
+				return fail(p, "Nothing in reach");
+			}
+			for (Entity e : hit) {
+				((LivingEntity) e).hurtServer(l, p.damageSources().mobAttack(p), attackDamage(p));
+				knock(e, look.x * 1.2, 0.3, look.z * 1.2);
+			}
+			return sound(p, l, SoundEvents.POLAR_BEAR_WARNING);
+		});
+		// Sheep graze: grass under you turns to dirt (EatBlockGoal), and it feeds you a little.
+		power("sheep", "Eat grass", 100, (p, l) -> {
+			BlockPos feet = p.blockPosition();
+			BlockPos below = feet.below();
+			if (l.getBlockState(feet).is(BlockTags.EDIBLE_FOR_SHEEP)) {
+				l.destroyBlock(feet, false);
+			} else if (l.getBlockState(below).is(Blocks.GRASS_BLOCK)) {
+				l.levelEvent(LevelEvent.PARTICLES_AND_SOUND_DESTROY_BLOCK, below, Block.getId(Blocks.GRASS_BLOCK.defaultBlockState()));
+				l.setBlock(below, Blocks.DIRT.defaultBlockState(), Block.UPDATE_CLIENTS);
+			} else {
+				return fail(p, "No grass here");
+			}
+			p.heal(2.0F);
+			p.getFoodData().eat(2, 0.3F);
+			return sound(p, l, SoundEvents.GENERIC_EAT.value());
+		});
+		// Sniffers dig up ancient seeds from the sniffer's own loot table.
+		power("sniffer", "Dig", 2400, (p, l) -> {
+			BlockPos below = p.blockPosition().below();
+			if (!l.getBlockState(below).is(BlockTags.SNIFFER_DIGGABLE_BLOCK)) {
+				return fail(p, "Nothing to dig here");
+			}
+			p.dropFromGiftLootTable(l, BuiltInLootTables.SNIFFER_DIGGING, (level, stack) -> {
+				ItemEntity seed = new ItemEntity(level, p.getX(), p.getY() + 0.2, p.getZ(), stack);
+				seed.setDefaultPickUpDelay();
+				level.addFreshEntity(seed);
+			});
+			l.levelEvent(LevelEvent.PARTICLES_AND_SOUND_DESTROY_BLOCK, below, Block.getId(l.getBlockState(below)));
+			return sound(p, l, SoundEvents.SNIFFER_DROP_SEED);
 		});
 	}
 
@@ -388,26 +472,78 @@ public final class MorphPowers {
 		return sound(p, l, sound);
 	}
 
+	/** Ground charge: run forward with a little hop. */
 	private static boolean charge(ServerPlayer p, ServerLevel l, double speed, float damage, double knockback, SoundEvent sound) {
 		Vec3 look = flatLook(p);
-		setMotion(p, new Vec3(look.x * speed, 0.2, look.z * speed));
-		AABB front = p.getBoundingBox().expandTowards(look.scale(3)).inflate(0.5);
+		return charge(p, l, new Vec3(look.x, 0.2 / speed, look.z), speed, damage, knockback, sound);
+	}
+
+	/** Move along `direction` and hit everything in the 3 blocks ahead. */
+	private static boolean charge(ServerPlayer p, ServerLevel l, Vec3 direction, double speed, float damage, double knockback, SoundEvent sound) {
+		setMotion(p, direction.scale(speed));
+		Vec3 ahead = direction.normalize();
+		AABB front = p.getBoundingBox().expandTowards(ahead.scale(3)).inflate(0.5);
 		for (Entity e : l.getEntities(p, front, e -> e instanceof LivingEntity && e.isAlive())) {
 			LivingEntity living = (LivingEntity) e;
 			living.hurtServer(l, p.damageSources().mobAttack(p), damage);
-			knock(living, look.x * knockback, 0.4, look.z * knockback);
+			knock(living, ahead.x * knockback, 0.4, ahead.z * knockback);
 		}
 		return sound(p, l, sound);
 	}
 
+	/**
+	 * Jump forward from the ground. With `atTarget`, aim the jump at what the player is looking at (like
+	 * LeapAtTargetGoal), otherwise straight ahead. Plays the mob's own voice.
+	 */
+	private static boolean leap(ServerPlayer p, ServerLevel l, double forward, double up, boolean atTarget) {
+		if (!p.onGround() && !p.isInWater()) {
+			return fail(p, "Must be on the ground");
+		}
+		LivingEntity target = atTarget ? target(p, 12) : null;
+		Vec3 dir = target == null ? flatLook(p) : new Vec3(target.getX() - p.getX(), 0, target.getZ() - p.getZ());
+		dir = dir.lengthSqr() > 1.0E-7 ? dir.normalize() : flatLook(p);
+		setMotion(p, new Vec3(dir.x * forward, up, dir.z * forward));
+		return voice(p, l);
+	}
+
+	/** Damage what's in reach and throw it into the air. */
+	private static boolean toss(ServerPlayer p, ServerLevel l, float damage, SoundEvent sound) {
+		LivingEntity target = target(p, 4);
+		if (target == null) {
+			return fail(p, "Nothing in reach");
+		}
+		target.hurtServer(l, p.damageSources().mobAttack(p), damage);
+		knock(target, 0, 0.8, 0);
+		return sound(p, l, sound);
+	}
+
+	/** The morph's melee damage (MorphState sets it from the mob's attribute). */
+	private static float attackDamage(ServerPlayer p) {
+		return (float) p.getAttributeValue(Attributes.ATTACK_DAMAGE);
+	}
+
+	/** Play the morphed mob's own idle sound; wolves and cats have one per variant. */
+	private static boolean voice(ServerPlayer p, ServerLevel l) {
+		EntityType<?> type = MorphState.current(p);
+		SoundEvent sound = type != null && MorphTemplates.get(type, l) instanceof MobAccessor mob ? mob.morph$ambientSound() : null;
+		if (sound != null) {
+			sound(p, l, sound);
+		}
+		return true;
+	}
+
 	private static boolean arrow(ServerPlayer p, ServerLevel l, @Nullable MobEffectInstance effect) {
+		return arrow(p, l, effect, 2.5F, SoundEvents.SKELETON_SHOOT);
+	}
+
+	private static boolean arrow(ServerPlayer p, ServerLevel l, @Nullable MobEffectInstance effect, float velocity, SoundEvent sound) {
 		Arrow arrow = new Arrow(l, p, new ItemStack(Items.ARROW), null);
 		arrow.pickup = AbstractArrow.Pickup.CREATIVE_ONLY;
 		if (effect != null) {
 			arrow.addEffect(effect);
 		}
-		throwItem(p, l, arrow, 2.5F);
-		return sound(p, l, SoundEvents.SKELETON_SHOOT);
+		throwItem(p, l, arrow, velocity);
+		return sound(p, l, sound);
 	}
 
 	/** Push an entity. Players move themselves, so they must be told about the new velocity directly. */

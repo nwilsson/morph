@@ -14,6 +14,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContex
 import net.minecraft.client.CameraType;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.effect.MobEffects;
@@ -25,6 +26,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
 
@@ -77,6 +79,22 @@ public class MorphPowersGameTest implements FabricClientGameTest {
 			power(ctx, world, EntityTypes.ARMADILLO, (p, l) -> p.hasEffect(MobEffects.RESISTANCE));
 			power(ctx, world, EntityTypes.AXOLOTL, (p, l) -> p.hasEffect(MobEffects.REGENERATION));
 			power(ctx, world, EntityTypes.FROG, (p, l) -> dummy(l, p).getDeltaMovement().z < -0.1 || dummy(l, p).position().z < START.z + 4.9);
+			// Pounces and leaps carry the player toward the cow (south, +z).
+			for (EntityType<?> pouncer : List.of(EntityTypes.WOLF, EntityTypes.CAT, EntityTypes.SPIDER, EntityTypes.FOX, EntityTypes.HORSE)) {
+				power(ctx, world, pouncer, (p, l) -> p.getZ() > START.z + 1.0);
+			}
+			power(ctx, world, EntityTypes.TURTLE, (p, l) -> p.hasEffect(MobEffects.RESISTANCE));
+			power(ctx, world, EntityTypes.PILLAGER, (p, l) -> count(l, p, EntityTypes.ARROW) == 1);
+			power(ctx, world, EntityTypes.PIGLIN, (p, l) -> count(l, p, EntityTypes.ARROW) == 1);
+			power(ctx, world, EntityTypes.ILLUSIONER, (p, l) -> p.hasEffect(MobEffects.INVISIBILITY) && dummy(l, p).hasEffect(MobEffects.BLINDNESS));
+			power(ctx, world, EntityTypes.PHANTOM, (p, l) -> dummyHurt(l, p), 3.0);
+			power(ctx, world, EntityTypes.VEX, (p, l) -> dummyHurt(l, p), 3.0);
+			power(ctx, world, EntityTypes.POLAR_BEAR, (p, l) -> dummyHurt(l, p), 2.0);
+			power(ctx, world, EntityTypes.HOGLIN, (p, l) -> dummyHurt(l, p), 3.0);
+			power(ctx, world, EntityTypes.ZOGLIN, (p, l) -> dummyHurt(l, p), 3.0);
+			power(ctx, world, EntityTypes.SHEEP, (p, l) -> l.getBlockState(BlockPos.containing(START.x, START.y - 1, START.z)).is(Blocks.DIRT));
+			power(ctx, world, EntityTypes.SNIFFER, (p, l) -> !l.getEntitiesOfClass(ItemEntity.class, p.getBoundingBox().inflate(3)).isEmpty());
+			dolphin(ctx, world);
 			creeper(ctx, world);
 			weaknesses(ctx, world);
 			melee(ctx, world);
@@ -112,6 +130,8 @@ public class MorphPowersGameTest implements FabricClientGameTest {
 			p.setHealth(p.getMaxHealth());
 			p.teleportTo(START.x, START.y, START.z);
 			p.setDeltaMovement(0, 0, 0);
+			// The client owns its motion: without this, a dash from the last stage carries on after the teleport.
+			p.connection.send(new ClientboundSetEntityMotionPacket(p));
 			MorphState.unlock(p, morph);
 			MorphState.morph(p, morph);
 			Mob cow = EntityTypes.COW.create(l, EntitySpawnReason.COMMAND);
@@ -189,6 +209,23 @@ public class MorphPowersGameTest implements FabricClientGameTest {
 		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
 	}
 
+	/** The dolphin dashes in water and refuses on land. */
+	private void dolphin(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		stage(ctx, world, EntityTypes.DOLPHIN, 8.0);
+		world.getServer().runOnServer(server -> MorphPowers.use(world.getConnection().getServerPlayer()));
+		check(world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().getAttachedOrElse(MorphPowers.READY_AT, 0L) == 0L),
+			"dolphin: dashed on land");
+		world.getServer().runCommand("fill -2 -60 -2 2 -56 12 minecraft:water");
+		ctx.waitTicks(10);
+		world.getServer().runOnServer(server -> MorphPowers.use(world.getConnection().getServerPlayer()));
+		ctx.waitTicks(5);
+		check(world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().getZ() > START.z + 1.5),
+			"dolphin: no dash in water (z=" + world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().getZ()) + ")");
+		// The water spreads up to 7 blocks past the pool, outside what stage() clears.
+		world.getServer().runCommand("fill -12 -60 -12 12 -55 24 minecraft:air");
+		Morph.LOGGER.info("MORPH-TEST ok dolphin");
+	}
+
 	private void creeper(ClientGameTestContext ctx, TestSingleplayerContext world) {
 		stage(ctx, world, EntityTypes.CREEPER, 3.0);
 		world.getServer().runOnServer(server -> MorphPowers.use(world.getConnection().getServerPlayer()));
@@ -196,7 +233,7 @@ public class MorphPowersGameTest implements FabricClientGameTest {
 		world.getServer().runOnServer(server -> {
 			ServerPlayer p = world.getConnection().getServerPlayer();
 			check(p.isAlive() && p.getHealth() == p.getMaxHealth(), "creeper: player hurt by own blast (" + p.getHealth() + ")");
-			check(p.level().getBlockState(BlockPos.containing(START.x, START.y - 1, START.z)).isAir(), "creeper: no crater");
+			check(p.level().getBlockState(BlockPos.containing(START.x, START.y - 1, START.z)).isAir(), "creeper: no crater (" + p.level().getBlockState(BlockPos.containing(START.x, START.y - 1, START.z)) + ", at feet " + p.level().getBlockState(BlockPos.containing(START)) + ")");
 			check(dummy(p.level(), p) == null || dummy(p.level(), p).getHealth() < dummy(p.level(), p).getMaxHealth(), "creeper: cow untouched");
 		});
 		Morph.LOGGER.info("MORPH-TEST ok creeper");
