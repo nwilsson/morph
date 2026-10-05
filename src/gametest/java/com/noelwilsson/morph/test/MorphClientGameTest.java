@@ -1,5 +1,6 @@
 package com.noelwilsson.morph.test;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.noelwilsson.morph.Morph;
 import com.noelwilsson.morph.MorphPowers;
 import com.noelwilsson.morph.MorphState;
@@ -12,6 +13,8 @@ import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.minecraft.client.CameraType;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.navigation.ScreenPosition;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.StringTag;
@@ -31,6 +34,7 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.level.Level;
 
 /**
  * End to end in a real client: kill a parrot, morph into it, check health/flight/hitbox on both sides,
@@ -245,7 +249,10 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		Morph.LOGGER.info("MORPH-TEST ok animation {}", morph.toShortString());
 	}
 
-	/** Unlock enough mobs to overflow the sidebar, open it with the key, scroll, and click a mob with the mouse. */
+	/**
+	 * Unlock enough mobs to overflow the sidebar, open it with the key, scroll, and click a mob with the mouse. Then expand
+	 * the sheep, whose looks share one row, and pick the red one from its tiles.
+	 */
 	private static void sidebar(ClientGameTestContext ctx, TestSingleplayerContext world) {
 		world.getServer().runOnServer(server -> {
 			ServerPlayer player = world.getConnection().getServerPlayer();
@@ -255,6 +262,8 @@ public class MorphClientGameTest implements FabricClientGameTest {
 				EntityTypes.SPIDER, EntityTypes.SQUID, EntityTypes.WOLF, EntityTypes.ZOMBIE)) {
 				MorphState.unlock(player, type);
 			}
+			// With the red sheep from variants(), three looks of sheep.
+			MorphState.unlock(player, sheep(player.level(), DyeColor.BLUE));
 		});
 		ctx.waitTicks(5);
 		world.getConnection().waitForClientboundPackets();
@@ -265,24 +274,25 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		ctx.waitTicks(5);
 		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-top"));
 
-		// The cursor must be over the panel for the wheel to reach it.
+		// The cursor must be over the list for the wheel to reach it.
 		double scale = ctx.computeOnClient(mc -> (double) mc.getWindow().getGuiScale());
-		int panelX = ctx.computeOnClient(mc -> ((MorphSidebarScreen) mc.gui.screen()).panelLeft()) + 40;
-		ctx.getInput().setCursorPos(panelX * scale, 100 * scale);
+		int panelX = ctx.computeOnClient(mc -> sidebar(mc).panelLeft()) + 40;
+		int listTop = ctx.computeOnClient(mc -> sidebar(mc).listTop());
+		ctx.getInput().setCursorPos(panelX * scale, (listTop + 40) * scale);
 		ctx.getInput().scroll(-30);
 		ctx.waitTicks(5);
-		double scrolled = ctx.computeOnClient(mc -> ((MorphSidebarScreen) mc.gui.screen()).scroll());
+		double scrolled = ctx.computeOnClient(mc -> sidebar(mc).scroll());
 		check(scrolled > 0, "sidebar didn't scroll");
 		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-scrolled"));
 
-		// Click the spider row, wherever scrolling left it.
-		int spiderTop = ctx.computeOnClient(mc -> {
-			MorphSidebarScreen screen = (MorphSidebarScreen) mc.gui.screen();
-			return screen.entryTop(screen.indexOf(EntityTypes.SPIDER));
-		});
-		check(spiderTop >= MorphSidebarScreen.HEADER_HEIGHT, "spider row scrolled out of view: " + spiderTop);
-		ctx.getInput().setCursorPos(panelX * scale, (spiderTop + MorphSidebarScreen.ENTRY_HEIGHT / 2.0) * scale);
-		ctx.getInput().pressMouse(0);
+		// Click the spider row, wherever scrolling left it, wheeling back up if it went past.
+		for (int i = 0; i < 10 && ctx.computeOnClient(mc -> sidebar(mc).rowTop(EntityTypes.SPIDER)) < listTop; i++) {
+			ctx.getInput().scroll(1);
+			ctx.waitTicks(1);
+		}
+		int spiderTop = ctx.computeOnClient(mc -> sidebar(mc).rowTop(EntityTypes.SPIDER));
+		check(spiderTop >= listTop, "spider row scrolled out of view: " + spiderTop);
+		click(ctx, scale, panelX, spiderTop + MorphSidebarScreen.ENTRY_HEIGHT / 2.0);
 		ctx.waitTicks(25);
 		world.getConnection().waitForClientboundPackets();
 		check(world.getServer().computeOnServer(s -> MorphState.current(world.getConnection().getServerPlayer())) == EntityTypes.SPIDER,
@@ -292,17 +302,66 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
 		ctx.waitForScreen(MorphSidebarScreen.class);
 		ctx.waitTicks(5);
-		int spiderRow = ctx.computeOnClient(mc -> {
-			MorphSidebarScreen screen = (MorphSidebarScreen) mc.gui.screen();
-			return screen.entryTop(screen.indexOf(EntityTypes.SPIDER));
-		});
+		int spiderRow = ctx.computeOnClient(mc -> sidebar(mc).rowTop(EntityTypes.SPIDER));
 		int screenHeight = ctx.computeOnClient(mc -> mc.gui.screen().height);
-		check(spiderRow >= MorphSidebarScreen.HEADER_HEIGHT && spiderRow + MorphSidebarScreen.ENTRY_HEIGHT <= screenHeight,
+		check(spiderRow >= listTop && spiderRow + MorphSidebarScreen.ENTRY_HEIGHT <= screenHeight,
 			"reopened sidebar doesn't show the current morph: row at " + spiderRow);
 		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-spider-selected"));
+
+		// The sheep's looks are folded into one row until its arrow is clicked.
+		check(!ctx.computeOnClient(mc -> sidebar(mc).isExpanded(EntityTypes.SHEEP)), "sheep looks open before asking");
+		int sheepTop = ctx.computeOnClient(mc -> sidebar(mc).rowTop(EntityTypes.SHEEP));
+		check(sheepTop >= listTop, "sheep row out of view: " + sheepTop);
+		int arrowX = ctx.computeOnClient(mc -> mc.gui.screen().width) - MorphSidebarScreen.ARROW_WIDTH / 2 - 2;
+		click(ctx, scale, arrowX, sheepTop + MorphSidebarScreen.ENTRY_HEIGHT / 2.0);
+		ctx.waitTicks(5);
+		check(ctx.computeOnClient(mc -> sidebar(mc).isExpanded(EntityTypes.SHEEP)), "the arrow didn't open the sheep's looks");
+		check(ctx.computeOnClient(mc -> mc.gui.screen() instanceof MorphSidebarScreen), "opening the looks closed the sidebar");
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-sheep-expanded"));
+		click(ctx, scale, panelX, sheepTop + MorphSidebarScreen.ENTRY_HEIGHT / 2.0, InputConstants.MOUSE_BUTTON_RIGHT);
+		ctx.waitTicks(2);
+		check(!ctx.computeOnClient(mc -> sidebar(mc).isExpanded(EntityTypes.SHEEP)), "right-clicking the open sheep row didn't fold it");
+		click(ctx, scale, arrowX, sheepTop + MorphSidebarScreen.ENTRY_HEIGHT / 2.0);
+		ctx.waitTicks(2);
+		check(ctx.computeOnClient(mc -> sidebar(mc).isExpanded(EntityTypes.SHEEP)), "the arrow didn't reopen the sheep's looks");
+
+		MorphVariant red = ctx.computeOnClient(mc -> sheep(mc.level, DyeColor.RED));
+		ScreenPosition redTile = ctx.computeOnClient(mc -> sidebar(mc).tileCenter(red));
+		check(redTile != null && redTile.y() >= listTop, "red sheep tile not shown: " + redTile);
+		click(ctx, scale, redTile.x(), redTile.y());
+		ctx.waitTicks(25);
+		world.getConnection().waitForClientboundPackets();
+		check(red.equals(world.getServer().computeOnServer(s -> MorphState.currentVariant(world.getConnection().getServerPlayer()))),
+			"clicking the red tile didn't morph into a red sheep");
+
+		// Reopened as a red sheep, the sheep's looks open by themselves.
+		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
+		ctx.waitForScreen(MorphSidebarScreen.class);
+		ctx.waitTicks(5);
+		check(ctx.computeOnClient(mc -> sidebar(mc).isExpanded(EntityTypes.SHEEP)), "current morph's looks aren't open");
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-red-sheep-selected"));
 		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
 		ctx.waitTicks(2);
 		check(ctx.computeOnClient(mc -> mc.gui.screen() == null), "the sidebar key didn't close the sidebar");
+	}
+
+	private static MorphSidebarScreen sidebar(Minecraft mc) {
+		return (MorphSidebarScreen) mc.gui.screen();
+	}
+
+	private static MorphVariant sheep(Level level, DyeColor color) {
+		Sheep sheep = EntityTypes.SHEEP.create(level, EntitySpawnReason.COMMAND);
+		sheep.setColor(color);
+		return MorphVariant.of(sheep);
+	}
+
+	private static void click(ClientGameTestContext ctx, double scale, double x, double y) {
+		click(ctx, scale, x, y, InputConstants.MOUSE_BUTTON_LEFT);
+	}
+
+	private static void click(ClientGameTestContext ctx, double scale, double x, double y, int button) {
+		ctx.getInput().setCursorPos(x * scale, y * scale);
+		ctx.getInput().pressMouse(button);
 	}
 
 	private static void command(TestSingleplayerContext world, String command) {
