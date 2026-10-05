@@ -5,16 +5,20 @@ import com.noelwilsson.morph.MorphRelations;
 import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphTemplates;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -25,9 +29,54 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class LivingEntityMixin {
 	/** Strider.getLiquidCollisionShape: a half-block slab at the lava surface. */
 	private static final VoxelShape STRIDER_LIQUID_SHAPE = Block.column(16.0, 0.0, 8.0);
+	/** Entity.FLAG_FALL_FLYING. */
+	private static final int FALL_FLYING_FLAG = 7;
 
 	private @Nullable EntityType<?> morph$type() {
 		return (Object) this instanceof Player player ? MorphState.current(player) : null;
+	}
+
+	@Shadow
+	protected abstract boolean canGlide();
+
+	private boolean morph$glides() {
+		EntityType<?> type = morph$type();
+		return type != null && MorphAbilities.of(type).contains(MorphAbilities.Ability.GLIDE);
+	}
+
+	/** Phantom morphs glide like an elytra wearer, without the elytra: same rules for when (in the air, not riding). */
+	@Inject(method = "canGlide", at = @At("HEAD"), cancellable = true)
+	private void morph$wings(CallbackInfoReturnable<Boolean> cir) {
+		LivingEntity self = (LivingEntity) (Object) this;
+		if (morph$glides() && !self.onGround() && !self.isPassenger() && !self.hasEffect(MobEffects.LEVITATION)) {
+			cir.setReturnValue(true);
+		}
+	}
+
+	/**
+	 * Wings don't wear out. Vanilla damages a random elytra every second of gliding and, wearing none, would pick from
+	 * an empty list. So without an elytra on, run the rest of updateFallFlying here and skip the wear.
+	 */
+	@Inject(method = "updateFallFlying", at = @At("HEAD"), cancellable = true)
+	private void morph$glideWithoutElytra(CallbackInfo ci) {
+		LivingEntity self = (LivingEntity) (Object) this;
+		if (!morph$glides()) {
+			return;
+		}
+		for (EquipmentSlot slot : EquipmentSlot.VALUES) {
+			if (LivingEntity.canGlideUsing(self.getItemBySlot(slot), slot)) {
+				return;
+			}
+		}
+		ci.cancel();
+		self.checkFallDistanceAccumulation();
+		if (!self.level().isClientSide()) {
+			if (!canGlide()) {
+				((EntityInvoker) self).morph$setSharedFlag(FALL_FLYING_FLAG, false);
+			} else if ((self.getFallFlyingTicks() + 1) % 10 == 0) {
+				self.gameEvent(GameEvent.ELYTRA_GLIDE);
+			}
+		}
 	}
 
 	/** Spider morphs climb walls: pushing into a wall counts as being on a ladder. */

@@ -34,6 +34,8 @@ import net.minecraft.world.entity.monster.Ravager;
 import net.minecraft.world.entity.monster.hoglin.Hoglin;
 import net.minecraft.world.entity.monster.warden.Warden;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.entity.monster.skeleton.Skeleton;
@@ -48,9 +50,6 @@ import net.minecraft.world.level.Level;
  * screenshot it, unmorph, check everything is back.
  */
 public class MorphClientGameTest implements FabricClientGameTest {
-	/** A hotbar slot nothing in the test fills, for an empty hand. */
-	private static final int EMPTY_SLOT = 4;
-
 	@Override
 	public void runTest(ClientGameTestContext ctx) {
 		try (TestSingleplayerContext world = ctx.worldBuilder().create()) {
@@ -120,6 +119,7 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			cooldownSurvivesMorphing(world);
 			squid(ctx, world);
 			nautilus(ctx, world);
+			phantom(ctx, world);
 			sidebar(ctx, world);
 		}
 		Morph.LOGGER.info("MORPH-TEST PASS");
@@ -351,10 +351,14 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		int selected = ctx.computeOnClient(mc -> mc.player.getInventory().getSelectedSlot());
 		ctx.runOnClient(mc -> {
 			mc.options.setCameraType(CameraType.FIRST_PERSON);
-			mc.player.getInventory().setSelectedSlot(EMPTY_SLOT);
+			for (int slot = 8; slot >= 0; slot--) {
+				if (mc.player.getInventory().getItem(slot).isEmpty()) {
+					mc.player.getInventory().setSelectedSlot(slot);
+				}
+			}
 		});
 		ctx.waitTicks(5);
-		check(ctx.computeOnClient(mc -> mc.player.getMainHandItem().isEmpty()), "hotbar slot " + EMPTY_SLOT + " isn't empty");
+		check(ctx.computeOnClient(mc -> mc.player.getMainHandItem().isEmpty()), "no empty hotbar slot for an empty hand");
 		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("first-person-squid-no-arm"));
 		ctx.runOnClient(mc -> mc.player.getInventory().setSelectedSlot(selected));
 		command(world, "unmorph");
@@ -382,6 +386,80 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		});
 		ctx.waitTicks(5);
 		Morph.LOGGER.info("MORPH-TEST ok nautilus");
+	}
+
+	/**
+	 * The phantom glides like an elytra wearer without wearing one, and flapping (jump while gliding) lifts it off flat
+	 * ground. Real key presses: jump, jump again in the air to glide, then flap. Gliding past 20 ticks also covers the
+	 * elytra wear check, which used to pick an elytra slot from none.
+	 */
+	private static void phantom(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			MorphState.unlock(player, EntityTypes.PHANTOM);
+			MorphState.morph(player, EntityTypes.PHANTOM);
+			check(!player.getAbilities().mayfly, "phantom: has creative flight");
+		});
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		double ground = ctx.computeOnClient(mc -> mc.player.getY());
+		Vec3 takeoff = world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().position());
+		ctx.runOnClient(mc -> {
+			mc.player.setXRot(-20);
+			mc.options.setCameraType(CameraType.THIRD_PERSON_BACK);
+		});
+		ctx.getInput().holdKeyFor(options -> options.keyJump, 2); // off the ground
+		ctx.waitTicks(4);
+		ctx.getInput().holdKeyFor(options -> options.keyJump, 2); // in the air: glide
+		ctx.waitTicks(2);
+		check(ctx.computeOnClient(mc -> mc.player.isFallFlying()), "phantom: jumping in the air didn't start gliding");
+		double highest = ground;
+		for (int flap = 0; flap < 6; flap++) {
+			ctx.getInput().holdKeyFor(options -> options.keyJump, 2);
+			for (int tick = 0; tick < MorphPowers.FLAP_COOLDOWN + 1; tick++) {
+				ctx.waitTicks(1);
+				highest = Math.max(highest, ctx.computeOnClient(mc -> mc.player.getY()));
+			}
+			Morph.LOGGER.info("MORPH-TEST debug phantom flap {}: y {}", flap, ctx.computeOnClient(mc -> mc.player.getY()));
+		}
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("phantom-gliding"));
+		// The body follows the flight path, not the camera.
+		ctx.computeOnClient(mc -> {
+			Vec3 motion = mc.player.getDeltaMovement();
+			float path = (float) -Math.toDegrees(Math.atan2(motion.y, motion.horizontalDistance()));
+			float body = MorphClient.disguise(mc.player).getXRot();
+			check(Math.abs(body - path) < 15, "phantom: body pitch " + body + " doesn't follow the flight path " + path);
+			return null;
+		});
+		// Turn right: the view leads the flight, so it banks right.
+		for (int tick = 0; tick < 6; tick++) {
+			ctx.runOnClient(mc -> mc.player.setYRot(mc.player.getYRot() + 8));
+			ctx.waitTicks(1);
+		}
+		float bank = ctx.computeOnClient(mc -> MorphClient.bank(MorphClient.disguise(mc.player), 1.0F));
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("phantom-banking-right"));
+		check(bank > 10, "phantom: no right bank while turning right: " + bank);
+		check(highest > ground + 4, "phantom: flapping didn't climb (" + ground + " -> " + highest + ")");
+		check(ctx.computeOnClient(mc -> mc.player.isFallFlying()), "phantom: stopped gliding mid-air");
+		check(world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().isFallFlying()), "server: phantom isn't gliding");
+
+		// Back as a player, without an elytra: no gliding, and the glide ends.
+		ctx.runOnClient(mc -> mc.player.setXRot(0));
+		command(world, "unmorph");
+		ctx.waitTicks(5);
+		check(!world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().isFallFlying()), "unmorphed: still gliding");
+		// Put the player back down rather than fall from the top of the climb.
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			player.teleportTo(takeoff.x, takeoff.y, takeoff.z);
+			player.resetFallDistance();
+			player.setDeltaMovement(Vec3.ZERO);
+			player.connection.send(new ClientboundSetEntityMotionPacket(player));
+		});
+		ctx.waitTicks(10);
+		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
+		world.getServer().runOnServer(server -> world.getConnection().getServerPlayer().setHealth(20.0F));
+		Morph.LOGGER.info("MORPH-TEST ok phantom {} -> {}", ground, highest);
 	}
 
 	/**

@@ -31,6 +31,8 @@ public class Morph implements ModInitializer {
 
 		PayloadTypeRegistry.serverboundPlay().register(MorphPowerPayload.TYPE, MorphPowerPayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(MorphPowerPayload.TYPE, (payload, context) -> MorphPowers.use(context.player()));
+		PayloadTypeRegistry.serverboundPlay().register(MorphFlapPayload.TYPE, MorphFlapPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(MorphFlapPayload.TYPE, (payload, context) -> MorphPowers.flap(context.player()));
 		PayloadTypeRegistry.clientboundPlay().register(MorphAnimationPayload.TYPE, MorphAnimationPayload.CODEC);
 
 		// Attacking an entity plays the mob's own attack animation on the disguise.

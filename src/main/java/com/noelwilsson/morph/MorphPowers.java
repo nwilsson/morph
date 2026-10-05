@@ -96,6 +96,13 @@ public final class MorphPowers {
 	public record Power(String name, int cooldown, Action action) {}
 
 	private static final Map<String, Power> POWERS = new HashMap<>();
+	/** Game time each gliding player can flap again. */
+	private static final Map<UUID, Long> NEXT_FLAP = new HashMap<>();
+	public static final int FLAP_COOLDOWN = 20;
+	private static final double FLAP_FORWARD = 0.2;
+	private static final double FLAP_UP = 0.4;
+	/** Firework-boosted elytra flight tops out around 1.7 blocks a tick; flapping stays under it. */
+	private static final double FLAP_MAX_SPEED = 1.0;
 	/** Creepers explode after a fuse, like the real thing. */
 	private static final Map<UUID, Long> FUSES = new HashMap<>();
 	private static final int CREEPER_FUSE = 30;
@@ -380,6 +387,7 @@ public final class MorphPowers {
 	public static void changedBody(ServerPlayer player) {
 		FUSES.remove(player.getUUID());
 		SONIC_BOOMS.remove(player.getUUID());
+		NEXT_FLAP.remove(player.getUUID());
 		showCooldown(player);
 	}
 
@@ -394,6 +402,29 @@ public final class MorphPowers {
 			player.removeAttached(READY_AT);
 			player.removeAttached(COOLDOWN);
 		}
+	}
+
+	/**
+	 * A wingbeat while gliding: a push up and along the look, like a weak firework, at most once every
+	 * {@link #FLAP_COOLDOWN} ticks. Enough to take off from flat ground and climb, slower than rockets.
+	 */
+	public static void flap(ServerPlayer player) {
+		EntityType<?> type = MorphState.current(player);
+		if (type == null || !player.isFallFlying() || !MorphAbilities.of(type).contains(MorphAbilities.Ability.GLIDE)) {
+			return;
+		}
+		ServerLevel level = player.level();
+		long now = level.getGameTime();
+		if (now < NEXT_FLAP.getOrDefault(player.getUUID(), 0L)) {
+			return;
+		}
+		NEXT_FLAP.put(player.getUUID(), now + FLAP_COOLDOWN);
+		Vec3 motion = player.getDeltaMovement().add(player.getLookAngle().scale(FLAP_FORWARD)).add(0, FLAP_UP, 0);
+		if (motion.length() > FLAP_MAX_SPEED) {
+			motion = motion.normalize().scale(FLAP_MAX_SPEED);
+		}
+		setMotion(player, motion);
+		level.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.PHANTOM_FLAP, SoundSource.PLAYERS, 1.0F, 1.0F);
 	}
 
 	/** Every power ready now. For tests; changing body never does this. */

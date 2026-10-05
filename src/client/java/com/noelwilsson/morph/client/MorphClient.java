@@ -2,6 +2,7 @@ package com.noelwilsson.morph.client;
 
 import com.noelwilsson.morph.Morph;
 import com.noelwilsson.morph.MorphAnimationPayload;
+import com.noelwilsson.morph.MorphFlapPayload;
 import com.noelwilsson.morph.MorphPowerPayload;
 import com.noelwilsson.morph.MorphPowers;
 import com.noelwilsson.morph.MorphState;
@@ -27,6 +28,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.squid.Squid;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -49,6 +51,8 @@ public class MorphClient implements ClientModInitializer {
 	/** Player tick until which the disguise looks aggressive (zombie arms up, vindicator axe out) after attacking. */
 	private static final Map<UUID, Integer> AGGRESSIVE_UNTIL = new HashMap<>();
 	private static final int AGGRESSIVE_TICKS = 40;
+	private static boolean jumpWasDown;
+	private static boolean glidingLastTick;
 	/** Squid.handleEntityEvent: start the next tentacle stroke. */
 	private static final byte SQUID_STROKE = 19;
 
@@ -70,6 +74,7 @@ public class MorphClient implements ClientModInitializer {
 				minecraft.gui.setScreen(new MorphSidebarScreen());
 			}
 		}
+		flap(minecraft);
 		while (USE_POWER.consumeClick()) {
 			if (minecraft.player != null && MorphPowers.of(MorphState.current(minecraft.player)) != null
 				&& ClientPlayNetworking.canSend(MorphPowerPayload.TYPE)) {
@@ -83,6 +88,7 @@ public class MorphClient implements ClientModInitializer {
 			DISGUISE_LOOKS.clear();
 			LAST_SWING.clear();
 			AGGRESSIVE_UNTIL.clear();
+			GLIDES.clear();
 			return;
 		}
 		for (Player player : level.players()) {
@@ -106,6 +112,7 @@ public class MorphClient implements ClientModInitializer {
 				} catch (RuntimeException e) {
 					Morph.LOGGER.debug("Disguise tick failed for {}", disguise.getType(), e);
 				}
+				glide(player);
 				sync(player, disguise);
 			}
 		}
@@ -113,6 +120,80 @@ public class MorphClient implements ClientModInitializer {
 		DISGUISE_LOOKS.keySet().retainAll(DISGUISES.keySet());
 		LAST_SWING.keySet().retainAll(DISGUISES.keySet());
 		AGGRESSIVE_UNTIL.keySet().retainAll(DISGUISES.keySet());
+		GLIDES.keySet().retainAll(DISGUISES.keySet());
+	}
+
+	/**
+	 * Jump while already gliding is a wingbeat. Not the press that started the glide: vanilla spends that one on
+	 * starting it, and it ends this tick already gliding, so only count presses made while gliding last tick.
+	 */
+	private static void flap(Minecraft minecraft) {
+		Player player = minecraft.player;
+		boolean jump = minecraft.options.keyJump.isDown();
+		if (player != null && jump && !jumpWasDown && glidingLastTick && player.isFallFlying()
+			&& ClientPlayNetworking.canSend(MorphFlapPayload.TYPE)) {
+			ClientPlayNetworking.send(MorphFlapPayload.INSTANCE);
+		}
+		jumpWasDown = jump;
+		glidingLastTick = player != null && player.isFallFlying();
+	}
+
+	/**
+	 * How a gliding disguise is held, eased toward the flight once a tick (the renderer blends between ticks). The
+	 * player model on an elytra points where you look; a winged mob should point where it's going and bank into turns.
+	 */
+	private static final class Glide {
+		float pitch, pitchO, yaw, yawO, roll, rollO;
+
+		Glide(Player player) {
+			pitch = pitchO = player.getXRot();
+			yaw = yawO = player.getYRot();
+		}
+	}
+
+	private static final Map<UUID, Glide> GLIDES = new HashMap<>();
+	/** Share of the way to the flight direction covered each tick. */
+	private static final float GLIDE_EASE = 0.35F;
+	private static final float BANK_EASE = 0.25F;
+	private static final float MAX_PITCH = 80.0F;
+	private static final float MAX_BANK = 60.0F;
+
+	private static void glide(Player player) {
+		if (!player.isFallFlying()) {
+			GLIDES.remove(player.getUUID());
+			return;
+		}
+		Glide glide = GLIDES.computeIfAbsent(player.getUUID(), uuid -> new Glide(player));
+		glide.pitchO = glide.pitch;
+		glide.yawO = glide.yaw;
+		glide.rollO = glide.roll;
+		Vec3 motion = player.getDeltaMovement();
+		double horizontal = motion.horizontalDistance();
+		float targetPitch = motion.lengthSqr() < 1.0E-4 ? player.getXRot()
+			: Mth.clamp((float) -Math.toDegrees(Math.atan2(motion.y, horizontal)), -MAX_PITCH, MAX_PITCH);
+		float targetYaw = horizontal < 0.05 ? player.getYRot() : (float) Math.toDegrees(Mth.atan2(motion.z, motion.x)) - 90.0F;
+		// Bank: how far the view leads the flight, the same angle the vanilla elytra pose rolls by. Positive is a right turn.
+		float targetRoll = 0.0F;
+		Vec3 look = player.getLookAngle();
+		if (horizontal > 0.05 && look.horizontalDistance() > 1.0E-3) {
+			double dot = motion.horizontal().normalize().dot(look.horizontal().normalize());
+			double side = motion.x * look.z - motion.z * look.x;
+			targetRoll = Mth.clamp((float) (Math.signum(side) * Math.toDegrees(Math.acos(Math.min(1.0, Math.abs(dot))))), -MAX_BANK, MAX_BANK);
+		}
+		glide.pitch += (targetPitch - glide.pitch) * GLIDE_EASE;
+		glide.yaw += Mth.wrapDegrees(targetYaw - glide.yaw) * GLIDE_EASE;
+		glide.roll += (targetRoll - glide.roll) * BANK_EASE;
+	}
+
+	/** Degrees a gliding disguise is banked, positive to the right; 0 for anything else. */
+	public static float bank(Entity disguise, float partialTicks) {
+		for (Map.Entry<UUID, Entity> entry : DISGUISES.entrySet()) {
+			if (entry.getValue() == disguise) {
+				Glide glide = GLIDES.get(entry.getKey());
+				return glide == null ? 0.0F : Mth.lerp(partialTicks, glide.rollO, glide.roll);
+			}
+		}
+		return 0.0F;
 	}
 
 	/** The disguise to draw for this player, or null if they aren't morphed. */
@@ -205,6 +286,17 @@ public class MorphClient implements ClientModInitializer {
 			living.hurtTime = player.hurtTime;
 			living.hurtDuration = player.hurtDuration;
 			living.deathTime = player.deathTime;
+			Glide glide = GLIDES.get(player.getUUID());
+			if (glide != null) {
+				living.setXRot(glide.pitch);
+				living.xRotO = glide.pitchO;
+				living.setYRot(glide.yaw);
+				living.yRotO = glide.yawO;
+				living.yBodyRot = glide.yaw;
+				living.yBodyRotO = glide.yawO;
+				living.yHeadRot = glide.yaw;
+				living.yHeadRotO = glide.yawO;
+			}
 		}
 	}
 }

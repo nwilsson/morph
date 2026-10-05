@@ -11,6 +11,7 @@ import net.minecraft.world.entity.EntityType;
 public final class MorphAbilities {
 	public enum Ability {
 		FLY,             // creative-style flight, no fall damage
+		GLIDE,           // elytra without an elytra: jump in the air to glide, jump again to flap
 		SLOW_FALL,       // flaps instead of falling
 		WATER_BREATHING,
 		SWIM,            // dolphin's grace
@@ -29,7 +30,7 @@ public final class MorphAbilities {
 		e("bee", Ability.FLY),
 		e("allay", Ability.FLY),
 		e("vex", Ability.FLY),
-		e("phantom", Ability.FLY, Ability.NIGHT_VISION),
+		e("phantom", Ability.GLIDE, Ability.NIGHT_VISION),
 		e("ghast", Ability.FLY),
 		e("happy_ghast", Ability.FLY),
 		e("blaze", Ability.FLY),
