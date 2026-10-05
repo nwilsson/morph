@@ -41,7 +41,9 @@ import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.entity.monster.skeleton.Skeleton;
 import net.minecraft.world.entity.animal.squid.Squid;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 
@@ -120,6 +122,7 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			squid(ctx, world);
 			nautilus(ctx, world);
 			phantom(ctx, world);
+			heldItems(ctx, world);
 			sidebar(ctx, world);
 		}
 		Morph.LOGGER.info("MORPH-TEST PASS");
@@ -460,6 +463,44 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
 		world.getServer().runOnServer(server -> world.getConnection().getServerPlayer().setHealth(20.0F));
 		Morph.LOGGER.info("MORPH-TEST ok phantom {} -> {}", ground, highest);
+	}
+
+	/** A humanoid disguise holds the player's items, in the same hands, and lets go when the player does. */
+	private static void heldItems(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			MorphState.unlock(player, EntityTypes.ZOMBIE);
+			MorphState.morph(player, EntityTypes.ZOMBIE);
+			player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.DIAMOND_SWORD));
+			player.setItemInHand(InteractionHand.OFF_HAND, new ItemStack(Items.SHIELD));
+		});
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> {
+			Entity disguise = MorphClient.disguise(mc.player);
+			check(disguise instanceof Zombie zombie && zombie.getMainHandItem().is(Items.DIAMOND_SWORD)
+				&& zombie.getOffhandItem().is(Items.SHIELD), "zombie disguise isn't holding the sword and shield");
+			mc.player.setYRot(180);
+			mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
+		});
+		ctx.waitTicks(5);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("zombie-holding-sword"));
+
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+			player.setItemInHand(InteractionHand.OFF_HAND, ItemStack.EMPTY);
+		});
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> {
+			LivingEntity disguise = (LivingEntity) MorphClient.disguise(mc.player);
+			check(disguise.getMainHandItem().isEmpty() && disguise.getOffhandItem().isEmpty(), "zombie disguise kept the items after they were put away");
+			mc.options.setCameraType(CameraType.FIRST_PERSON);
+		});
+		command(world, "unmorph");
+		ctx.waitTicks(5);
+		Morph.LOGGER.info("MORPH-TEST ok held-items");
 	}
 
 	/**

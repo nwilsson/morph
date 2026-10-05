@@ -21,13 +21,16 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.squid.Squid;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
@@ -114,6 +117,7 @@ public class MorphClient implements ClientModInitializer {
 				}
 				glide(player);
 				sync(player, disguise);
+				hold(player, disguise);
 			}
 		}
 		DISGUISES.keySet().removeIf(uuid -> level.getPlayerByUUID(uuid) == null);
@@ -255,6 +259,25 @@ public class MorphClient implements ClientModInitializer {
 		LAST_SWING.put(player.getUUID(), current);
 		if (disguise instanceof Mob mob) {
 			mob.setAggressive(player.tickCount < AGGRESSIVE_UNTIL.getOrDefault(player.getUUID(), 0));
+		}
+	}
+
+	/**
+	 * The disguise holds what the player holds, in the same hands. Mobs with arms (zombies, skeletons, piglins,
+	 * illagers) draw it like a player would; foxes and dolphins carry it in their mouths; the rest ignore it.
+	 */
+	private static void hold(Player player, Entity disguise) {
+		if (!(disguise instanceof LivingEntity living)) {
+			return;
+		}
+		for (InteractionHand hand : InteractionHand.values()) {
+			ItemStack held = player.getItemInHand(hand);
+			if (!ItemStack.matches(held, living.getItemInHand(hand))) {
+				living.setItemInHand(hand, held.copy());
+			}
+		}
+		if (living instanceof Mob mob) {
+			mob.setLeftHanded(player.getMainArm() == HumanoidArm.LEFT);
 		}
 	}
 
