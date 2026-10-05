@@ -120,8 +120,8 @@ public final class MorphState {
 		double fraction = healthFraction(player);
 		float before = player.getHealth();
 		clearAbilities(player);
-		MorphPowers.resetCooldown(player);
 		player.setAttached(CURRENT, variant);
+		MorphPowers.changedBody(player);
 		player.refreshDimensions();
 		apply(player);
 		setHealthFraction(player, fraction, before);
@@ -135,7 +135,7 @@ public final class MorphState {
 		float before = player.getHealth();
 		player.removeAttached(CURRENT);
 		clearAbilities(player);
-		MorphPowers.resetCooldown(player);
+		MorphPowers.changedBody(player);
 		player.refreshDimensions();
 		setHealthFraction(player, fraction, before);
 	}

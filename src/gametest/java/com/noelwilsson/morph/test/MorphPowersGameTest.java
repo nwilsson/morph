@@ -125,6 +125,7 @@ public class MorphPowersGameTest implements FabricClientGameTest {
 			ServerPlayer p = world.getConnection().getServerPlayer();
 			ServerLevel l = p.level();
 			MorphState.unmorph(p);
+			MorphPowers.clearCooldowns(p);
 			p.removeAllEffects();
 			p.clearFire();
 			p.setHealth(p.getMaxHealth());

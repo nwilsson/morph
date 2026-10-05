@@ -1,5 +1,6 @@
 package com.noelwilsson.morph;
 
+import com.mojang.serialization.Codec;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -70,11 +71,18 @@ import org.jspecify.annotations.Nullable;
  * server; the client only sends "use" and draws the cooldown from the synced attachment.
  */
 public final class MorphPowers {
-	/** Game time when the power can be used again. Synced to the owner for the HUD. */
+	/**
+	 * Game time each mob's power is ready again, by mob id. It stays when the player changes body, so morphing away
+	 * and back can't skip a cooldown (chicken, pig, chicken used to lay an egg every time). Saved with the player.
+	 */
+	public static final AttachmentType<Map<String, Long>> READY_BY_MOB = AttachmentRegistry.<Map<String, Long>>builder()
+		.persistent(Codec.unboundedMap(Codec.STRING, Codec.LONG))
+		.buildAndRegister(Morph.id("ready_by_mob"));
+	/** Game time when the current body's power can be used again. Synced to the owner for the HUD. */
 	public static final AttachmentType<Long> READY_AT = AttachmentRegistry.<Long>builder()
 		.syncWith(ByteBufCodecs.VAR_LONG, AttachmentSyncPredicate.targetOnly())
 		.buildAndRegister(Morph.id("ready_at"));
-	/** Cooldown length of the last power used, so the HUD can draw a fraction. */
+	/** Cooldown length of the current body's power, so the HUD can draw a fraction. */
 	public static final AttachmentType<Integer> COOLDOWN = AttachmentRegistry.<Integer>builder()
 		.syncWith(ByteBufCodecs.VAR_INT, AttachmentSyncPredicate.targetOnly())
 		.buildAndRegister(Morph.id("cooldown"));
@@ -338,30 +346,60 @@ public final class MorphPowers {
 		return "minecraft".equals(id.getNamespace()) ? POWERS.get(id.getPath()) : null;
 	}
 
+	private static String key(EntityType<?> type) {
+		return BuiltInRegistries.ENTITY_TYPE.getKey(type).getPath();
+	}
+
 	/** Called when the client presses the power key. */
 	public static void use(ServerPlayer player) {
-		Power power = of(MorphState.current(player));
+		EntityType<?> type = MorphState.current(player);
+		Power power = of(type);
 		if (power == null || !player.isAlive() || player.isSpectator()) {
 			return;
 		}
 		ServerLevel level = player.level();
 		long now = level.getGameTime();
-		long readyAt = player.getAttachedOrElse(READY_AT, 0L);
+		long readyAt = player.getAttachedOrElse(READY_BY_MOB, Map.of()).getOrDefault(key(type), 0L);
 		if (now < readyAt) {
 			player.sendOverlayMessage(Component.literal(power.name() + " ready in " + String.format("%.1f", (readyAt - now) / 20.0) + "s"));
 			return;
 		}
 		if (power.action().use(player, level)) {
-			player.setAttached(COOLDOWN, power.cooldown());
-			player.setAttached(READY_AT, now + power.cooldown());
+			Map<String, Long> ready = new HashMap<>(player.getAttachedOrElse(READY_BY_MOB, Map.of()));
+			ready.values().removeIf(time -> time <= now);
+			ready.put(key(type), now + power.cooldown());
+			player.setAttached(READY_BY_MOB, ready);
+			showCooldown(player);
 		}
 	}
 
-	public static void resetCooldown(ServerPlayer player) {
-		player.removeAttached(READY_AT);
-		player.removeAttached(COOLDOWN);
+	/**
+	 * After a change of body: cancels anything the old body had started (a creeper's fuse, a warden's wind-up) and
+	 * shows the new body's cooldown, which carries on from whenever that mob's power was last used.
+	 */
+	public static void changedBody(ServerPlayer player) {
 		FUSES.remove(player.getUUID());
 		SONIC_BOOMS.remove(player.getUUID());
+		showCooldown(player);
+	}
+
+	private static void showCooldown(ServerPlayer player) {
+		EntityType<?> type = MorphState.current(player);
+		Power power = of(type);
+		long readyAt = power == null ? 0L : player.getAttachedOrElse(READY_BY_MOB, Map.of()).getOrDefault(key(type), 0L);
+		if (readyAt > player.level().getGameTime()) {
+			player.setAttached(READY_AT, readyAt);
+			player.setAttached(COOLDOWN, power.cooldown());
+		} else {
+			player.removeAttached(READY_AT);
+			player.removeAttached(COOLDOWN);
+		}
+	}
+
+	/** Every power ready now. For tests; changing body never does this. */
+	public static void clearCooldowns(ServerPlayer player) {
+		player.removeAttached(READY_BY_MOB);
+		showCooldown(player);
 	}
 
 	public static void tick(MinecraftServer server) {

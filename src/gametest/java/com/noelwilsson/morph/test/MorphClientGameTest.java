@@ -40,6 +40,7 @@ import net.minecraft.world.entity.monster.skeleton.Skeleton;
 import net.minecraft.world.entity.animal.squid.Squid;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 
 /**
@@ -116,6 +117,7 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			variants(ctx, world);
 			animations(ctx, world);
 			relations(world);
+			cooldownSurvivesMorphing(world);
 			squid(ctx, world);
 			nautilus(ctx, world);
 			sidebar(ctx, world);
@@ -295,6 +297,36 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			MorphState.unmorph(player);
 		});
 		Morph.LOGGER.info("MORPH-TEST ok relations");
+	}
+
+	/** Morphing chicken, pig, chicken (or unmorphing) used to clear the cooldown: an egg every couple of seconds. */
+	private static void cooldownSurvivesMorphing(TestSingleplayerContext world) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			MorphPowers.clearCooldowns(player);
+			MorphState.unlock(player, EntityTypes.CHICKEN);
+			MorphState.unlock(player, EntityTypes.PIG);
+			MorphState.morph(player, EntityTypes.CHICKEN);
+			MorphPowers.use(player);
+			long readyAt = player.getAttachedOrElse(MorphPowers.READY_AT, 0L);
+			check(readyAt > player.level().getGameTime(), "chicken: laying an egg started no cooldown");
+			int eggs = eggs(player);
+			MorphState.morph(player, EntityTypes.PIG);
+			check(player.getAttachedOrElse(MorphPowers.READY_AT, 0L) == 0L, "pig: shows the chicken's cooldown");
+			MorphState.morph(player, EntityTypes.CHICKEN);
+			check(player.getAttachedOrElse(MorphPowers.READY_AT, 0L) == readyAt, "chicken again: cooldown was reset");
+			MorphPowers.use(player);
+			MorphState.unmorph(player);
+			MorphState.morph(player, EntityTypes.CHICKEN);
+			MorphPowers.use(player);
+			check(eggs(player) == eggs, "morphing away and back laid another egg");
+			MorphState.unmorph(player);
+		});
+		Morph.LOGGER.info("MORPH-TEST ok cooldown-survives-morphing");
+	}
+
+	private static int eggs(ServerPlayer player) {
+		return player.level().getEntities(EntityTypes.ITEM, player.getBoundingBox().inflate(4), item -> item.getItem().is(Items.EGG)).size();
 	}
 
 	/** A squid disguise keeps stroking its tentacles; it used to freeze after the first stroke, waiting for the server. */
