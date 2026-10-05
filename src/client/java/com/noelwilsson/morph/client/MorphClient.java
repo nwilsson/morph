@@ -19,11 +19,13 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.squid.Squid;
 import net.minecraft.world.entity.player.Player;
 import org.jspecify.annotations.Nullable;
 
@@ -47,6 +49,8 @@ public class MorphClient implements ClientModInitializer {
 	/** Player tick until which the disguise looks aggressive (zombie arms up, vindicator axe out) after attacking. */
 	private static final Map<UUID, Integer> AGGRESSIVE_UNTIL = new HashMap<>();
 	private static final int AGGRESSIVE_TICKS = 40;
+	/** Squid.handleEntityEvent: start the next tentacle stroke. */
+	private static final byte SQUID_STROKE = 19;
 
 	@Override
 	public void onInitializeClient() {
@@ -94,6 +98,11 @@ public class MorphClient implements ClientModInitializer {
 				swing(player, disguise);
 				try {
 					disguise.tick();
+					// A client squid holds its tentacles still at the end of a stroke until the server says to go
+					// again (entity event 19). Nobody sends that for a disguise, so send it here.
+					if (disguise instanceof Squid squid && squid.tentacleMovement >= Mth.TWO_PI) {
+						squid.handleEntityEvent(SQUID_STROKE);
+					}
 				} catch (RuntimeException e) {
 					Morph.LOGGER.debug("Disguise tick failed for {}", disguise.getType(), e);
 				}

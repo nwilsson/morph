@@ -252,6 +252,9 @@ public final class MorphPowers {
 			setMotion(p, p.getLookAngle().scale(1.8));
 			return sound(p, l, SoundEvents.DOLPHIN_JUMP);
 		});
+		// Nautiluses dash where their rider looks, hard in water and weakly on land (AbstractNautilus.executeRidersJump).
+		power("nautilus", "Dash", 40, (p, l) -> nautilusDash(p, l, SoundEvents.NAUTILUS_DASH, SoundEvents.NAUTILUS_DASH_ON_LAND));
+		power("zombie_nautilus", "Dash", 40, (p, l) -> nautilusDash(p, l, SoundEvents.ZOMBIE_NAUTILUS_DASH, SoundEvents.ZOMBIE_NAUTILUS_DASH_ON_LAND));
 		power("turtle", "Shell", 200, (p, l) -> {
 			p.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, 100, 2));
 			p.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 100, 2));
@@ -480,6 +483,11 @@ public final class MorphPowers {
 			target.addEffect(new MobEffectInstance(MobEffects.MINING_FATIGUE, 1200, 2), p);
 		}
 		return sound(p, l, SoundEvents.GUARDIAN_ATTACK);
+	}
+
+	private static boolean nautilusDash(ServerPlayer p, ServerLevel l, SoundEvent inWater, SoundEvent onLand) {
+		setMotion(p, p.getLookAngle().scale(p.isInWater() ? 1.8 : 0.75));
+		return sound(p, l, p.isInWater() ? inWater : onLand);
 	}
 
 	private static boolean ink(ServerPlayer p, ServerLevel l, SoundEvent sound) {

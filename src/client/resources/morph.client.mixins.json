@@ -2,6 +2,6 @@
 	"required": true,
 	"package": "com.noelwilsson.morph.client.mixin",
 	"compatibilityLevel": "JAVA_25",
-	"client": ["LevelExtractorMixin"],
+	"client": ["LevelExtractorMixin", "FirstPersonHandsAndItemsRendererMixin"],
 	"injectors": {"defaultRequire": 1}
 }

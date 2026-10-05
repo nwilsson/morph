@@ -106,7 +106,7 @@ abstract class LivingEntityMixin {
 		}
 	}
 
-	/** Monsters leave monster-morphed players alone unless provoked (covers goal and brain AI: both ask canAttack). */
+	/** Monsters leave morphed players alone unless they hunt that mob or were hit (covers goal and brain AI: both ask canAttack). */
 	@Inject(method = "canAttack", at = @At("HEAD"), cancellable = true)
 	private void morph$monstersIgnore(LivingEntity target, CallbackInfoReturnable<Boolean> cir) {
 		if (MorphRelations.monsterIgnores((LivingEntity) (Object) this, target)) {

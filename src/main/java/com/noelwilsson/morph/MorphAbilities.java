@@ -50,6 +50,8 @@ public final class MorphAbilities {
 		e("magma_cube", Ability.JUMP),
 		e("slime", Ability.JUMP),
 		e("dolphin", Ability.WATER_BREATHING, Ability.SWIM),
+		e("nautilus", Ability.WATER_BREATHING, Ability.SWIM),
+		e("zombie_nautilus", Ability.WATER_BREATHING, Ability.SWIM),
 		e("axolotl", Ability.WATER_BREATHING, Ability.SWIM),
 		e("guardian", Ability.WATER_BREATHING, Ability.SWIM),
 		e("elder_guardian", Ability.WATER_BREATHING, Ability.SWIM),

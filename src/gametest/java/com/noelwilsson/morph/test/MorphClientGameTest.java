@@ -2,12 +2,15 @@ package com.noelwilsson.morph.test;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.noelwilsson.morph.Morph;
+import com.noelwilsson.morph.MorphAbilities;
 import com.noelwilsson.morph.MorphPowers;
 import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphVariant;
 import com.noelwilsson.morph.client.MorphClient;
 import com.noelwilsson.morph.client.MorphSidebarScreen;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Predicate;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
@@ -33,6 +36,9 @@ import net.minecraft.world.entity.monster.warden.Warden;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.entity.monster.zombie.Zombie;
+import net.minecraft.world.entity.monster.skeleton.Skeleton;
+import net.minecraft.world.entity.animal.squid.Squid;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.level.Level;
 
@@ -41,6 +47,9 @@ import net.minecraft.world.level.Level;
  * screenshot it, unmorph, check everything is back.
  */
 public class MorphClientGameTest implements FabricClientGameTest {
+	/** A hotbar slot nothing in the test fills, for an empty hand. */
+	private static final int EMPTY_SLOT = 4;
+
 	@Override
 	public void runTest(ClientGameTestContext ctx) {
 		try (TestSingleplayerContext world = ctx.worldBuilder().create()) {
@@ -106,6 +115,9 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			health(world);
 			variants(ctx, world);
 			animations(ctx, world);
+			relations(world);
+			squid(ctx, world);
+			nautilus(ctx, world);
 			sidebar(ctx, world);
 		}
 		Morph.LOGGER.info("MORPH-TEST PASS");
@@ -247,6 +259,97 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			check(animated.test(MorphClient.disguise(mc.player)), morph.toShortString() + ": attacking didn't animate the disguise");
 		});
 		Morph.LOGGER.info("MORPH-TEST ok animation {}", morph.toShortString());
+	}
+
+	/** Monsters treat a morphed player like the mob they look like, and fight back whoever hits them. */
+	private static void relations(TestSingleplayerContext world) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			ServerLevel level = player.level();
+			Zombie zombie = EntityTypes.ZOMBIE.create(level, EntitySpawnReason.COMMAND);
+			Skeleton skeleton = EntityTypes.SKELETON.create(level, EntitySpawnReason.COMMAND);
+			for (Mob mob : List.<Mob>of(zombie, skeleton)) {
+				mob.setPos(player.getX() + 4, player.getY(), player.getZ());
+				level.addFreshEntity(mob);
+			}
+			check(zombie.canAttack(player), "zombie won't attack a plain player");
+			for (EntityType<?> type : List.of(EntityTypes.COW, EntityTypes.PIG, EntityTypes.CHICKEN, EntityTypes.ZOMBIE)) {
+				MorphState.unlock(player, type);
+				MorphState.morph(player, type);
+				check(!zombie.canAttack(player), "zombie attacks a " + type.toShortString() + " morph");
+				check(!skeleton.canAttack(player), "skeleton attacks a " + type.toShortString() + " morph");
+			}
+			// Their own prey stays prey.
+			MorphState.unlock(player, EntityTypes.VILLAGER);
+			MorphState.morph(player, EntityTypes.VILLAGER);
+			check(zombie.canAttack(player), "zombie ignores a villager morph");
+			MorphState.morph(player, EntityTypes.IRON_GOLEM);
+			check(skeleton.canAttack(player), "skeleton ignores an iron golem morph");
+			// Hit it as a cow and it fights back.
+			MorphState.morph(player, EntityTypes.COW);
+			zombie.setLastHurtByMob(player);
+			check(zombie.canAttack(player), "zombie doesn't fight back against a cow that hit it");
+			check(!skeleton.canAttack(player), "skeleton attacks a cow that hit someone else");
+			zombie.discard();
+			skeleton.discard();
+			MorphState.unmorph(player);
+		});
+		Morph.LOGGER.info("MORPH-TEST ok relations");
+	}
+
+	/** A squid disguise keeps stroking its tentacles; it used to freeze after the first stroke, waiting for the server. */
+	private static void squid(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			MorphState.unlock(player, EntityTypes.SQUID);
+			MorphState.morph(player, EntityTypes.SQUID);
+		});
+		ctx.waitTicks(100); // longer than the slowest stroke, 2π at 0.1 a tick
+		world.getConnection().waitForClientboundPackets();
+		Set<Float> angles = new HashSet<>();
+		for (int i = 0; i < 20; i++) {
+			angles.add(ctx.computeOnClient(mc -> ((Squid) MorphClient.disguise(mc.player)).tentacleAngle));
+			ctx.waitTicks(1);
+		}
+		check(angles.size() > 5, "squid tentacles stopped moving: " + angles);
+		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT));
+		ctx.waitTicks(5);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-squid"));
+		// First person, empty hand: no human arm on a squid.
+		int selected = ctx.computeOnClient(mc -> mc.player.getInventory().getSelectedSlot());
+		ctx.runOnClient(mc -> {
+			mc.options.setCameraType(CameraType.FIRST_PERSON);
+			mc.player.getInventory().setSelectedSlot(EMPTY_SLOT);
+		});
+		ctx.waitTicks(5);
+		check(ctx.computeOnClient(mc -> mc.player.getMainHandItem().isEmpty()), "hotbar slot " + EMPTY_SLOT + " isn't empty");
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("first-person-squid-no-arm"));
+		ctx.runOnClient(mc -> mc.player.getInventory().setSelectedSlot(selected));
+		command(world, "unmorph");
+		ctx.waitTicks(5);
+		Morph.LOGGER.info("MORPH-TEST ok squid");
+	}
+
+	/** The nautilus breathes and swims underwater and dashes like it does with a rider. */
+	private static void nautilus(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		for (EntityType<?> type : List.of(EntityTypes.NAUTILUS, EntityTypes.ZOMBIE_NAUTILUS)) {
+			check(MorphAbilities.of(type).containsAll(Set.of(MorphAbilities.Ability.WATER_BREATHING, MorphAbilities.Ability.SWIM)),
+				type.toShortString() + ": abilities " + MorphAbilities.of(type));
+			check(MorphPowers.of(type) != null, type.toShortString() + ": no power");
+		}
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			MorphState.unlock(player, EntityTypes.NAUTILUS);
+			MorphState.morph(player, EntityTypes.NAUTILUS);
+		});
+		ctx.waitTicks(25); // one ability refresh
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			check(player.hasEffect(MobEffects.WATER_BREATHING), "nautilus: no water breathing");
+			MorphState.unmorph(player);
+		});
+		ctx.waitTicks(5);
+		Morph.LOGGER.info("MORPH-TEST ok nautilus");
 	}
 
 	/**
