@@ -1,9 +1,11 @@
 package com.noelwilsson.morph.client;
 
 import com.noelwilsson.morph.Morph;
+import com.noelwilsson.morph.MorphAnimationPayload;
 import com.noelwilsson.morph.MorphPowerPayload;
 import com.noelwilsson.morph.MorphPowers;
 import com.noelwilsson.morph.MorphState;
+import com.noelwilsson.morph.MorphVariant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -21,6 +23,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import org.jspecify.annotations.Nullable;
 
@@ -37,11 +40,23 @@ public class MorphClient implements ClientModInitializer {
 
 	private static final Map<UUID, Entity> DISGUISES = new HashMap<>();
 	private static final Map<UUID, EntityType<?>> LAST_MORPH = new HashMap<>();
+	/** The look each disguise was made with, so a new look rebuilds it. */
+	private static final Map<UUID, MorphVariant> DISGUISE_LOOKS = new HashMap<>();
+	/** The last swing copied onto each disguise. A new swing is a new object, so identity tells them apart. */
+	private static final Map<UUID, LivingEntity.SwingDescription> LAST_SWING = new HashMap<>();
+	/** Player tick until which the disguise looks aggressive (zombie arms up, vindicator axe out) after attacking. */
+	private static final Map<UUID, Integer> AGGRESSIVE_UNTIL = new HashMap<>();
+	private static final int AGGRESSIVE_TICKS = 40;
 
 	@Override
 	public void onInitializeClient() {
 		ClientTickEvents.END_CLIENT_TICK.register(MorphClient::tick);
 		HudElementRegistry.attachElementAfter(VanillaHudElements.HOTBAR, Morph.id("power"), MorphPowerHud::extract);
+		ClientPlayNetworking.registerGlobalReceiver(MorphAnimationPayload.TYPE, (payload, context) -> {
+			if (context.client().level != null && context.client().level.getEntity(payload.playerId()) instanceof Player player) {
+				animate(player, payload.event());
+			}
+		});
 		Morph.LOGGER.info("Morph client loaded");
 	}
 
@@ -61,6 +76,9 @@ public class MorphClient implements ClientModInitializer {
 		if (level == null) {
 			DISGUISES.clear();
 			LAST_MORPH.clear();
+			DISGUISE_LOOKS.clear();
+			LAST_SWING.clear();
+			AGGRESSIVE_UNTIL.clear();
 			return;
 		}
 		for (Player player : level.players()) {
@@ -73,6 +91,7 @@ public class MorphClient implements ClientModInitializer {
 			Entity disguise = disguise(player);
 			if (disguise != null) {
 				sync(player, disguise);
+				swing(player, disguise);
 				try {
 					disguise.tick();
 				} catch (RuntimeException e) {
@@ -82,21 +101,32 @@ public class MorphClient implements ClientModInitializer {
 			}
 		}
 		DISGUISES.keySet().removeIf(uuid -> level.getPlayerByUUID(uuid) == null);
+		DISGUISE_LOOKS.keySet().retainAll(DISGUISES.keySet());
+		LAST_SWING.keySet().retainAll(DISGUISES.keySet());
+		AGGRESSIVE_UNTIL.keySet().retainAll(DISGUISES.keySet());
 	}
 
 	/** The disguise to draw for this player, or null if they aren't morphed. */
 	public static @Nullable Entity disguise(Player player) {
-		EntityType<?> type = MorphState.current(player);
+		MorphVariant variant = MorphState.currentVariant(player);
+		EntityType<?> type = variant == null ? null : variant.type();
 		if (type == null) {
 			DISGUISES.remove(player.getUUID());
+			DISGUISE_LOOKS.remove(player.getUUID());
 			return null;
 		}
 		Entity disguise = DISGUISES.get(player.getUUID());
-		if (disguise == null || disguise.getType() != type || disguise.level() != player.level()) {
+		if (disguise == null || !variant.equals(DISGUISE_LOOKS.get(player.getUUID())) || disguise.level() != player.level()) {
 			disguise = type.create(player.level(), EntitySpawnReason.LOAD);
 			if (disguise == null) {
 				return null;
 			}
+			try {
+				MorphVariant.apply(disguise, variant.data());
+			} catch (RuntimeException e) {
+				Morph.LOGGER.warn("Couldn't apply {} to the {} disguise", variant.snbt(), type, e);
+			}
+			DISGUISE_LOOKS.put(player.getUUID(), variant);
 			// 26.3 entities must have an ID before they render. Negative IDs never clash with real ones.
 			disguise.setId(-1 - player.getId());
 			disguise.setNoGravity(true);
@@ -105,6 +135,37 @@ public class MorphClient implements ClientModInitializer {
 			DISGUISES.put(player.getUUID(), disguise);
 		}
 		return disguise;
+	}
+
+	/** Plays an entity event on the player's disguise, as if the server had sent it for a real mob. */
+	public static void animate(Player player, byte event) {
+		Entity disguise = disguise(player);
+		if (disguise == null) {
+			return;
+		}
+		sync(player, disguise);
+		try {
+			disguise.handleEntityEvent(event);
+		} catch (RuntimeException e) {
+			Morph.LOGGER.debug("Disguise event {} failed for {}", event, disguise.getType(), e);
+		}
+		AGGRESSIVE_UNTIL.put(player.getUUID(), player.tickCount + AGGRESSIVE_TICKS);
+	}
+
+	/**
+	 * When the player starts a swing, the disguise starts its own: humanoid mobs (skeletons, piglins, vindicators)
+	 * swing their arm, at the mob's own swing speed. Mobs without arms ignore it.
+	 */
+	private static void swing(Player player, Entity disguise) {
+		LivingEntity.SwingDescription current = player.getCurrentSwing();
+		if (current != null && current != LAST_SWING.get(player.getUUID()) && disguise instanceof LivingEntity living) {
+			living.swing(current.hand(), current.animation(), false);
+			AGGRESSIVE_UNTIL.put(player.getUUID(), player.tickCount + AGGRESSIVE_TICKS);
+		}
+		LAST_SWING.put(player.getUUID(), current);
+		if (disguise instanceof Mob mob) {
+			mob.setAggressive(player.tickCount < AGGRESSIVE_UNTIL.getOrDefault(player.getUUID(), 0));
+		}
 	}
 
 	/** Copy everything the renderer reads from the player onto the disguise. */

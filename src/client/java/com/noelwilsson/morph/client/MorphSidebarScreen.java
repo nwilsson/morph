@@ -1,16 +1,16 @@
 package com.noelwilsson.morph.client;
 
 import com.noelwilsson.morph.MorphState;
+import com.noelwilsson.morph.MorphVariant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
@@ -40,8 +40,8 @@ public class MorphSidebarScreen extends Screen {
 	private static final int SUBTEXT = 0xFFB0B8C0;
 	private static final int HEART = 0xFFFF5555;
 
-	/** One row: null type means "yourself" (unmorph). */
-	private record Entry(@Nullable EntityType<?> type, Component name, ItemStack icon, String detail) {}
+	/** One row: a null variant means "yourself" (unmorph). Look is "red, sheared", or "" for a default mob. */
+	private record Entry(@Nullable MorphVariant variant, Component name, ItemStack icon, String detail, String look) {}
 
 	private final List<Entry> entries = new ArrayList<>();
 	private double scroll;
@@ -53,18 +53,20 @@ public class MorphSidebarScreen extends Screen {
 	@Override
 	protected void init() {
 		entries.clear();
-		entries.add(new Entry(null, Component.literal("Yourself"), new ItemStack(Items.PLAYER_HEAD), "Unmorph"));
-		List<EntityType<?>> unlocked = new ArrayList<>();
-		for (Identifier id : minecraft.player.getAttachedOrElse(MorphState.UNLOCKED, List.of())) {
-			BuiltInRegistries.ENTITY_TYPE.getOptional(id).ifPresent(unlocked::add);
+		entries.add(new Entry(null, Component.literal("Yourself"), new ItemStack(Items.PLAYER_HEAD), "Unmorph", ""));
+		List<Entry> unlocked = new ArrayList<>();
+		for (MorphVariant variant : minecraft.player.getAttachedOrElse(MorphState.UNLOCKED, List.<MorphVariant>of())) {
+			EntityType<?> type = variant.type();
+			if (type != null) {
+				ItemStack icon = SpawnEggItem.byId(type).map(ItemStack::new).orElseGet(() -> new ItemStack(Items.BARRIER));
+				unlocked.add(new Entry(variant, type.getDescription(), icon, hearts(type), variant.describe(minecraft.level)));
+			}
 		}
-		unlocked.sort(Comparator.comparing(type -> type.getDescription().getString()));
-		for (EntityType<?> type : unlocked) {
-			ItemStack icon = SpawnEggItem.byId(type).map(ItemStack::new).orElseGet(() -> new ItemStack(Items.BARRIER));
-			entries.add(new Entry(type, type.getDescription(), icon, hearts(type)));
-		}
+		// By mob, the default look first, then the others alphabetically.
+		unlocked.sort(Comparator.comparing((Entry entry) -> entry.name().getString()).thenComparing(Entry::look));
+		entries.addAll(unlocked);
 		// Open with the current morph in view.
-		int current = indexOf(MorphState.current(minecraft.player));
+		int current = indexOf(MorphState.currentVariant(minecraft.player));
 		scroll = clampScroll(current * ENTRY_HEIGHT - (listHeight() - ENTRY_HEIGHT) / 2.0);
 	}
 
@@ -103,9 +105,20 @@ public class MorphSidebarScreen extends Screen {
 		return listTop() + index * ENTRY_HEIGHT - (int) scroll;
 	}
 
-	public int indexOf(@Nullable EntityType<?> type) {
+	/** The first row for this mob, whatever its look. */
+	public int indexOf(EntityType<?> type) {
 		for (int i = 0; i < entries.size(); i++) {
-			if (entries.get(i).type() == type) {
+			MorphVariant variant = entries.get(i).variant();
+			if (variant != null && variant.type() == type) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	public int indexOf(@Nullable MorphVariant variant) {
+		for (int i = 0; i < entries.size(); i++) {
+			if (Objects.equals(entries.get(i).variant(), variant)) {
 				return i;
 			}
 		}
@@ -132,7 +145,7 @@ public class MorphSidebarScreen extends Screen {
 		graphics.text(font, Component.literal("Click to morph"), left + 8, 16, SUBTEXT);
 		graphics.fill(left + 1, HEADER_HEIGHT - 1, width, HEADER_HEIGHT, BORDER);
 
-		EntityType<?> current = MorphState.current(minecraft.player);
+		MorphVariant current = MorphState.currentVariant(minecraft.player);
 		int hovered = entryAt(mouseX, mouseY);
 		graphics.enableScissor(left + 1, listTop(), width, height);
 		for (int i = 0; i < entries.size(); i++) {
@@ -141,7 +154,7 @@ public class MorphSidebarScreen extends Screen {
 				continue;
 			}
 			Entry entry = entries.get(i);
-			if (entry.type() == current) {
+			if (Objects.equals(entry.variant(), current)) {
 				graphics.fill(left + 1, top, width, top + ENTRY_HEIGHT, SELECTED);
 				graphics.fill(left + 1, top, left + 3, top + ENTRY_HEIGHT, SELECTED_EDGE);
 			} else if (i == hovered) {
@@ -149,7 +162,11 @@ public class MorphSidebarScreen extends Screen {
 			}
 			graphics.item(entry.icon(), left + 8, top + 4);
 			graphics.text(font, font.plainSubstrByWidth(entry.name().getString(), width - left - 34), left + 30, top + 3, TEXT);
-			graphics.text(font, entry.detail(), left + 30, top + 13, entry.type() == null ? SUBTEXT : HEART);
+			graphics.text(font, entry.detail(), left + 30, top + 13, entry.variant() == null ? SUBTEXT : HEART);
+			if (!entry.look().isEmpty()) {
+				int lookLeft = left + 30 + font.width(entry.detail()) + 4;
+				graphics.text(font, font.plainSubstrByWidth(entry.look(), width - lookLeft - 4), lookLeft, top + 13, SUBTEXT);
+			}
 		}
 		graphics.disableScissor();
 
@@ -190,11 +207,11 @@ public class MorphSidebarScreen extends Screen {
 			}
 			return super.mouseClicked(event, doubleClick);
 		}
-		EntityType<?> type = entries.get(index).type();
-		if (type == null) {
+		MorphVariant variant = entries.get(index).variant();
+		if (variant == null) {
 			minecraft.player.connection.sendCommand("unmorph");
 		} else {
-			minecraft.player.connection.sendCommand("morph " + BuiltInRegistries.ENTITY_TYPE.getKey(type));
+			minecraft.player.connection.sendCommand("morph " + variant.id() + (variant.isDefault() ? "" : " " + variant.snbt()));
 		}
 		onClose();
 		return true;

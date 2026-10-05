@@ -166,6 +166,9 @@ public class MorphPowersGameTest implements FabricClientGameTest {
 		if (morph != EntityTypes.SNOW_GOLEM) {
 			check(SPAWNED.size() == before, morph.toShortString() + ": fired again during cooldown");
 		}
+		if (morph == EntityTypes.WARDEN) {
+			ctx.waitTicks(35); // the boom lands partway through the wind-up
+		}
 		Morph.LOGGER.info("MORPH-TEST debug {} after: {}", morph.toShortString(), world.getServer().computeOnServer(s -> around(world)));
 		String name = morph.toShortString();
 		boolean ok = world.getServer().computeOnServer(server -> {

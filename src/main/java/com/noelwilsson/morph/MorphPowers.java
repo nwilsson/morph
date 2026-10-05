@@ -91,6 +91,9 @@ public final class MorphPowers {
 	/** Creepers explode after a fuse, like the real thing. */
 	private static final Map<UUID, Long> FUSES = new HashMap<>();
 	private static final int CREEPER_FUSE = 30;
+	/** The sonic boom fires partway through the warden's wind-up animation, like the real one (SonicBoom). */
+	private static final Map<UUID, Long> SONIC_BOOMS = new HashMap<>();
+	private static final int SONIC_BOOM_DELAY = 34;
 
 	static {
 		power("blaze", "Fireballs", 40, (p, l) -> {
@@ -164,7 +167,11 @@ public final class MorphPowers {
 		};
 		power("llama", "Spit", 20, spit);
 		power("trader_llama", "Spit", 20, spit);
-		power("warden", "Sonic boom", 100, MorphPowers::sonicBoom);
+		power("warden", "Sonic boom", 100, (p, l) -> {
+			SONIC_BOOMS.put(p.getUUID(), l.getGameTime() + SONIC_BOOM_DELAY);
+			MorphAnimationPayload.broadcast(p, MorphAnimationPayload.SONIC_BOOM);
+			return sound(p, l, SoundEvents.WARDEN_SONIC_CHARGE);
+		});
 		power("guardian", "Laser", 40, (p, l) -> laser(p, l, 6.0F, false));
 		power("elder_guardian", "Laser", 40, (p, l) -> laser(p, l, 8.0F, true));
 		power("drowned", "Trident", 30, (p, l) -> {
@@ -351,9 +358,20 @@ public final class MorphPowers {
 		player.removeAttached(READY_AT);
 		player.removeAttached(COOLDOWN);
 		FUSES.remove(player.getUUID());
+		SONIC_BOOMS.remove(player.getUUID());
 	}
 
 	public static void tick(MinecraftServer server) {
+		for (Iterator<Map.Entry<UUID, Long>> it = SONIC_BOOMS.entrySet().iterator(); it.hasNext(); ) {
+			Map.Entry<UUID, Long> boom = it.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(boom.getKey());
+			if (player == null || MorphState.current(player) != EntityTypes.WARDEN || !player.isAlive()) {
+				it.remove();
+			} else if (player.level().getGameTime() >= boom.getValue()) {
+				it.remove();
+				sonicBoom(player, player.level());
+			}
+		}
 		for (Iterator<Map.Entry<UUID, Long>> it = FUSES.entrySet().iterator(); it.hasNext(); ) {
 			Map.Entry<UUID, Long> fuse = it.next();
 			ServerPlayer player = server.getPlayerList().getPlayer(fuse.getKey());
@@ -425,7 +443,8 @@ public final class MorphPowers {
 		return sound(p, l, SoundEvents.ENDERMAN_TELEPORT);
 	}
 
-	private static boolean sonicBoom(ServerPlayer p, ServerLevel l) {
+	/** Fires along wherever the player is looking now, so they can aim during the wind-up. */
+	private static void sonicBoom(ServerPlayer p, ServerLevel l) {
 		Vec3 eye = p.getEyePosition();
 		Vec3 look = p.getLookAngle();
 		for (int i = 1; i <= 15; i++) {
@@ -442,7 +461,7 @@ public final class MorphPowers {
 				knock(living, look.x * 2.5, 0.5, look.z * 2.5);
 			}
 		}
-		return sound(p, l, SoundEvents.WARDEN_SONIC_BOOM);
+		sound(p, l, SoundEvents.WARDEN_SONIC_BOOM);
 	}
 
 	private static boolean laser(ServerPlayer p, ServerLevel l, float damage, boolean fatigue) {

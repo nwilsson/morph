@@ -3,10 +3,11 @@ package com.noelwilsson.morph;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
+import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -30,6 +31,15 @@ public class Morph implements ModInitializer {
 
 		PayloadTypeRegistry.serverboundPlay().register(MorphPowerPayload.TYPE, MorphPowerPayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(MorphPowerPayload.TYPE, (payload, context) -> MorphPowers.use(context.player()));
+		PayloadTypeRegistry.clientboundPlay().register(MorphAnimationPayload.TYPE, MorphAnimationPayload.CODEC);
+
+		// Attacking an entity plays the mob's own attack animation on the disguise.
+		AttackEntityCallback.EVENT.register((player, level, hand, target, hit) -> {
+			if (player instanceof ServerPlayer serverPlayer && !player.isSpectator() && MorphState.current(player) != null) {
+				MorphAnimationPayload.broadcast(serverPlayer, MorphAnimationPayload.ATTACK);
+			}
+			return InteractionResult.PASS;
+		});
 
 		ServerLivingEntityEvents.AFTER_DAMAGE.register((entity, source, baseDamage, damageTaken, blocked) -> {
 			// Direct hits only: a fireball's owner is the player too, but that isn't a bite or a punch.
@@ -39,12 +49,17 @@ public class Morph implements ModInitializer {
 		});
 
 		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
-			if (entity instanceof Mob && source.getEntity() instanceof ServerPlayer player
-				&& MorphState.canMorphInto(entity.getType()) && MorphState.unlock(player, entity.getType())) {
+			if (!(entity instanceof Mob && source.getEntity() instanceof ServerPlayer player && MorphState.canMorphInto(entity.getType()))) {
+				return;
+			}
+			MorphVariant variant = MorphVariant.of(entity);
+			if (MorphState.unlock(player, variant)) {
+				String look = variant.describe(player.level());
+				String command = "/morph " + variant.id().getPath() + (variant.isDefault() ? "" : " " + variant.snbt());
 				player.sendSystemMessage(Component.literal("Unlocked morph: ").append(entity.getType().getDescription())
-					.append(Component.literal("  /morph " + net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).getPath())
-						.withStyle(ChatFormatting.GRAY)));
-				LOGGER.info("{} unlocked morph {}", player.getName().getString(), entity.getType());
+					.append(look.isEmpty() ? "" : " (" + look + ")")
+					.append(Component.literal("  " + command).withStyle(ChatFormatting.GRAY)));
+				LOGGER.info("{} unlocked morph {} {}", player.getName().getString(), entity.getType(), variant.snbt());
 			}
 		});
 

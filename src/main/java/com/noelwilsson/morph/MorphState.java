@@ -14,6 +14,7 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.EntityTypeTags;
+import net.minecraft.util.Mth;
 import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -33,18 +34,18 @@ import org.jspecify.annotations.Nullable;
 
 /** Per-player morph data (synced attachments) and the server-side rules that apply a morph. */
 public final class MorphState {
-	/** Mobs this player has killed, so can morph into. Survives death. */
-	public static final AttachmentType<List<Identifier>> UNLOCKED = AttachmentRegistry.<List<Identifier>>builder()
-		.persistent(Identifier.CODEC.listOf())
+	/** Mobs (and each look of them) this player has killed, so can morph into. Survives death. */
+	public static final AttachmentType<List<MorphVariant>> UNLOCKED = AttachmentRegistry.<List<MorphVariant>>builder()
+		.persistent(MorphVariant.CODEC.listOf())
 		.copyOnDeath()
 		.initializer(List::of)
-		.syncWith(Identifier.STREAM_CODEC.apply(ByteBufCodecs.list()), AttachmentSyncPredicate.targetOnly())
+		.syncWith(MorphVariant.STREAM_CODEC.apply(ByteBufCodecs.list()), AttachmentSyncPredicate.targetOnly())
 		.buildAndRegister(Morph.id("unlocked"));
 
 	/** The mob the player currently is. Everyone needs it to draw the player. Lost on death. */
-	public static final AttachmentType<Identifier> CURRENT = AttachmentRegistry.<Identifier>builder()
-		.persistent(Identifier.CODEC)
-		.syncWith(Identifier.STREAM_CODEC, AttachmentSyncPredicate.all())
+	public static final AttachmentType<MorphVariant> CURRENT = AttachmentRegistry.<MorphVariant>builder()
+		.persistent(MorphVariant.CODEC)
+		.syncWith(MorphVariant.STREAM_CODEC, AttachmentSyncPredicate.all())
 		.buildAndRegister(Morph.id("current"));
 
 	private static final Identifier HEALTH_MODIFIER = Morph.id("health");
@@ -53,6 +54,8 @@ public final class MorphState {
 	private static final Identifier ATTACK_MODIFIER = Morph.id("attack");
 	private static final double PLAYER_BASE_ATTACK = 1.0;
 	private static final double PLAYER_BASE_HEALTH = 20.0;
+	/** Health is carried between bodies in steps of this fraction of a point. */
+	private static final int HEALTH_GRID = 1024;
 	/** Ability effects are refreshed below this many ticks left, so they never run out while morphed. */
 	private static final int EFFECT_REFRESH = 40;
 	private static final int EFFECT_DURATION = 100;
@@ -64,49 +67,98 @@ public final class MorphState {
 	}
 
 	public static @Nullable EntityType<?> current(Player player) {
-		Identifier id = player.getAttached(CURRENT);
-		return id == null ? null : BuiltInRegistries.ENTITY_TYPE.getOptional(id).orElse(null);
+		MorphVariant variant = player.getAttached(CURRENT);
+		return variant == null ? null : variant.type();
+	}
+
+	public static @Nullable MorphVariant currentVariant(Player player) {
+		return player.getAttached(CURRENT);
 	}
 
 	public static boolean canMorphInto(EntityType<?> type) {
 		return type != EntityTypes.PLAYER && type != EntityTypes.MANNEQUIN && type != EntityTypes.ARMOR_STAND && DefaultAttributes.hasSupplier(type);
 	}
 
-	/** Returns true if this is a new unlock. */
+	/** Unlocks the mob's default look. Returns true if this is a new unlock. */
 	public static boolean unlock(ServerPlayer player, EntityType<?> type) {
-		Identifier id = BuiltInRegistries.ENTITY_TYPE.getKey(type);
-		List<Identifier> unlocked = player.getAttachedOrCreate(UNLOCKED);
-		if (unlocked.contains(id)) {
+		return unlock(player, MorphVariant.of(type));
+	}
+
+	/** Returns true if this is a new unlock. */
+	public static boolean unlock(ServerPlayer player, MorphVariant variant) {
+		List<MorphVariant> unlocked = player.getAttachedOrCreate(UNLOCKED);
+		if (unlocked.contains(variant)) {
 			return false;
 		}
-		List<Identifier> updated = new ArrayList<>(unlocked);
-		updated.add(id);
+		List<MorphVariant> updated = new ArrayList<>(unlocked);
+		updated.add(variant);
 		player.setAttached(UNLOCKED, List.copyOf(updated));
 		return true;
 	}
 
+	/** Any look of this mob. */
 	public static boolean isUnlocked(Player player, EntityType<?> type) {
-		return player.getAttachedOrElse(UNLOCKED, List.of()).contains(BuiltInRegistries.ENTITY_TYPE.getKey(type));
+		return !unlocked(player, type).isEmpty();
 	}
 
+	public static boolean isUnlocked(Player player, MorphVariant variant) {
+		return player.getAttachedOrElse(UNLOCKED, List.of()).contains(variant);
+	}
+
+	/** The looks of this mob the player has unlocked, oldest first. */
+	public static List<MorphVariant> unlocked(Player player, EntityType<?> type) {
+		Identifier id = BuiltInRegistries.ENTITY_TYPE.getKey(type);
+		return player.getAttachedOrElse(UNLOCKED, List.<MorphVariant>of()).stream().filter(variant -> variant.id().equals(id)).toList();
+	}
+
+	/** Morphs into the first unlocked look of this mob, or its default look. */
 	public static void morph(ServerPlayer player, EntityType<?> type) {
+		morph(player, unlocked(player, type).stream().findFirst().orElseGet(() -> MorphVariant.of(type)));
+	}
+
+	public static void morph(ServerPlayer player, MorphVariant variant) {
+		double fraction = healthFraction(player);
+		float before = player.getHealth();
 		clearAbilities(player);
 		MorphPowers.resetCooldown(player);
-		player.setAttached(CURRENT, BuiltInRegistries.ENTITY_TYPE.getKey(type));
+		player.setAttached(CURRENT, variant);
 		player.refreshDimensions();
 		apply(player);
-		// Start at full mob health so morphing isn't a free heal or a death sentence.
-		player.setHealth(player.getMaxHealth());
+		setHealthFraction(player, fraction, before);
 	}
 
 	public static void unmorph(ServerPlayer player) {
-		if (player.removeAttached(CURRENT) == null) {
+		if (player.getAttached(CURRENT) == null) {
 			return;
 		}
+		double fraction = healthFraction(player);
+		float before = player.getHealth();
+		player.removeAttached(CURRENT);
 		clearAbilities(player);
 		MorphPowers.resetCooldown(player);
 		player.refreshDimensions();
-		player.setHealth(Math.min(player.getHealth(), player.getMaxHealth()));
+		setHealthFraction(player, fraction, before);
+	}
+
+	/**
+	 * Health carries over as a fraction of max: half-dead stays half-dead in any body. Taken before the old body's
+	 * max health goes, since dropping max health also cuts health down to it.
+	 */
+	private static double healthFraction(ServerPlayer player) {
+		return Mth.clamp((double) player.getHealth() / player.getMaxHealth(), 0.0, 1.0);
+	}
+
+	/**
+	 * Rounded down to a fine grid, never to whole points: 1 of 20 health is a fifth of a point as a chicken and 1 again
+	 * after, where rounding the chicken up to a whole point would turn back into 5. Rounding down means switching back
+	 * and forth can only lose a sliver, never gain. Never zero: morphing doesn't kill.
+	 */
+	private static void setHealthFraction(ServerPlayer player, double fraction, float before) {
+		if (player.isDeadOrDying()) {
+			return;
+		}
+		float health = (float) (Math.floor(fraction * player.getMaxHealth() * HEALTH_GRID) / HEALTH_GRID);
+		player.setHealth(health > 0.0F ? health : Math.min(before, 1.0F / HEALTH_GRID));
 	}
 
 	/** Called every second for every player: (re)applies the morph so it survives relogs and gamemode changes. */

@@ -1,20 +1,36 @@
 package com.noelwilsson.morph.test;
 
 import com.noelwilsson.morph.Morph;
+import com.noelwilsson.morph.MorphPowers;
 import com.noelwilsson.morph.MorphState;
+import com.noelwilsson.morph.MorphVariant;
 import com.noelwilsson.morph.client.MorphClient;
 import com.noelwilsson.morph.client.MorphSidebarScreen;
 import java.util.List;
+import java.util.function.Predicate;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.minecraft.client.CameraType;
+import net.minecraft.commands.arguments.EntityAnchorArgument;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.golem.IronGolem;
+import net.minecraft.world.entity.monster.Ravager;
+import net.minecraft.world.entity.monster.hoglin.Hoglin;
+import net.minecraft.world.entity.monster.warden.Warden;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.entity.animal.sheep.Sheep;
+import net.minecraft.world.entity.monster.zombie.Zombie;
+import net.minecraft.world.item.DyeColor;
 
 /**
  * End to end in a real client: kill a parrot, morph into it, check health/flight/hitbox on both sides,
@@ -83,9 +99,150 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			ctx.runOnClient(mc -> checkHitbox("client", mc.player.getBbWidth(), mc.player.getBbHeight(), EntityTypes.PLAYER));
 			Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-unmorphed"));
 
+			health(world);
+			variants(ctx, world);
+			animations(ctx, world);
 			sidebar(ctx, world);
 		}
 		Morph.LOGGER.info("MORPH-TEST PASS");
+	}
+
+	/** Morphing keeps the fraction of health, so a big mob and back is not a heal (it used to fill health to the mob's max). */
+	private static void health(TestSingleplayerContext world) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			MorphState.unlock(player, EntityTypes.IRON_GOLEM);
+			MorphState.unlock(player, EntityTypes.CHICKEN);
+			player.setHealth(5.0F);
+			MorphState.morph(player, EntityTypes.IRON_GOLEM);
+			check(player.getHealth() == 25.0F, "golem: health " + player.getHealth() + ", want 25 (a quarter of 100)");
+			MorphState.unmorph(player);
+			check(player.getHealth() == 5.0F, "unmorphed from golem: health " + player.getHealth() + ", want 5");
+			// Switching back and forth, through a body much smaller than the player's, never adds health.
+			for (int i = 0; i < 20; i++) {
+				MorphState.morph(player, i % 2 == 0 ? EntityTypes.IRON_GOLEM : EntityTypes.CHICKEN);
+			}
+			MorphState.unmorph(player);
+			check(player.getHealth() <= 5.0F && player.getHealth() > 4.9F, "after switching: health " + player.getHealth() + ", want about 5");
+			player.setHealth(1.0F);
+			MorphState.morph(player, EntityTypes.CHICKEN);
+			MorphState.unmorph(player);
+			check(player.getHealth() <= 1.0F && player.getHealth() > 0.99F, "half a heart: health " + player.getHealth() + ", want 1");
+			player.setHealth(player.getMaxHealth());
+		});
+		Morph.LOGGER.info("MORPH-TEST ok health");
+	}
+
+	/** Each look of a mob is its own morph: a red sheep unlocks red, not blue, and the disguise wears the look. */
+	private static void variants(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		// Old saves stored bare ids; they must still read as the default look.
+		MorphVariant legacy = MorphVariant.CODEC.parse(NbtOps.INSTANCE, StringTag.valueOf("minecraft:pig")).getOrThrow();
+		check(legacy.equals(MorphVariant.of(EntityTypes.PIG)), "legacy id didn't decode to the default pig: " + legacy);
+
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			ServerLevel level = player.level();
+			Sheep sheep = EntityTypes.SHEEP.create(level, EntitySpawnReason.COMMAND);
+			sheep.setColor(DyeColor.RED);
+			Zombie zombie = EntityTypes.ZOMBIE.create(level, EntitySpawnReason.COMMAND);
+			zombie.setBaby(true);
+			for (Mob mob : List.<Mob>of(sheep, zombie)) {
+				mob.setPos(player.getX() + 2, player.getY(), player.getZ());
+				level.addFreshEntity(mob);
+				mob.hurtServer(level, player.damageSources().playerAttack(player), 1000);
+			}
+		});
+		ctx.waitTicks(2);
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			List<MorphVariant> sheep = MorphState.unlocked(player, EntityTypes.SHEEP);
+			check(sheep.size() == 1 && sheep.getFirst().describe(player.level()).equals("red"), "red sheep unlocked as " + sheep);
+			List<MorphVariant> zombie = MorphState.unlocked(player, EntityTypes.ZOMBIE);
+			check(zombie.size() == 1 && zombie.getFirst().describe(player.level()).equals("baby"), "baby zombie unlocked as " + zombie);
+		});
+
+		// Hand-written NBT with the wrong number type still finds the unlocked red sheep; blue stays locked.
+		command(world, "morph sheep {Color:11}");
+		ctx.waitTicks(2);
+		check(world.getServer().computeOnServer(s -> MorphState.current(world.getConnection().getServerPlayer())) != EntityTypes.SHEEP,
+			"morphed into a blue sheep without unlocking it");
+		command(world, "morph sheep {Color:14}");
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> {
+			check(MorphClient.disguise(mc.player) instanceof Sheep sheep && sheep.getColor() == DyeColor.RED, "client: disguise isn't a red sheep");
+			mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
+		});
+		ctx.waitTicks(10);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-red-sheep"));
+
+		command(world, "morph zombie");
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> check(MorphClient.disguise(mc.player) instanceof Zombie zombie && zombie.isBaby(), "client: disguise isn't a baby zombie"));
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-baby-zombie"));
+		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
+		command(world, "unmorph");
+		ctx.waitTicks(5);
+	}
+
+	/** Left-clicking a mob while morphed plays the disguise's own attack animation; the warden's power plays its wind-up. */
+	private static void animations(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		attack(ctx, world, EntityTypes.WARDEN, disguise -> ((Warden) disguise).attackAnimationState.isStarted());
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("warden-attack"));
+		attack(ctx, world, EntityTypes.IRON_GOLEM, disguise -> ((IronGolem) disguise).getAttackAnimationTick() > 0);
+		attack(ctx, world, EntityTypes.RAVAGER, disguise -> ((Ravager) disguise).getAttackTick() > 0);
+		attack(ctx, world, EntityTypes.HOGLIN, disguise -> ((Hoglin) disguise).getAttackAnimationRemainingTicks() > 0);
+		attack(ctx, world, EntityTypes.ZOMBIE, disguise -> ((Zombie) disguise).isAggressive());
+		attack(ctx, world, EntityTypes.SKELETON, disguise -> ((LivingEntity) disguise).isSwinging());
+
+		world.getServer().runOnServer(server -> {
+			MorphState.morph(world.getConnection().getServerPlayer(), EntityTypes.WARDEN);
+			MorphPowers.use(world.getConnection().getServerPlayer());
+		});
+		ctx.waitTicks(3);
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> check(MorphClient.disguise(mc.player) instanceof Warden warden && warden.sonicBoomAnimationState.isStarted(),
+			"warden: power didn't start the sonic boom animation"));
+		ctx.waitTicks(20);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("warden-sonic-boom"));
+		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
+		command(world, "unmorph");
+		ctx.waitTicks(40);
+	}
+
+	/** Morph, face a no-AI cow in reach, press the real attack key, then check the disguise. */
+	private static void attack(ClientGameTestContext ctx, TestSingleplayerContext world, EntityType<?> morph, Predicate<Entity> animated) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			ServerLevel level = player.level();
+			level.getEntities(player, player.getBoundingBox().inflate(16), e -> e instanceof Mob).forEach(Entity::discard);
+			MorphState.unlock(player, morph);
+			MorphState.morph(player, morph);
+			player.setYRot(0);
+			Mob cow = EntityTypes.COW.create(level, EntitySpawnReason.COMMAND);
+			cow.setNoAi(true);
+			cow.setPos(player.getX(), player.getY(), player.getZ() + 2.5);
+			level.addFreshEntity(cow);
+		});
+		ctx.waitTicks(3);
+		world.getConnection().waitForClientboundPackets();
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			Entity cow = player.level().getEntities(player, player.getBoundingBox().inflate(8), e -> e.getType() == EntityTypes.COW).getFirst();
+			player.lookAt(EntityAnchorArgument.Anchor.EYES, cow.getBoundingBox().getCenter());
+		});
+		ctx.waitTicks(3);
+		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT));
+		ctx.getInput().pressKey(options -> options.keyAttack);
+		ctx.waitTicks(2);
+		world.getConnection().waitForServerboundPackets();
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> {
+			check(mc.hitResult != null && mc.hitResult.getType() == HitResult.Type.ENTITY, morph.toShortString() + ": the cow wasn't under the crosshair");
+			check(animated.test(MorphClient.disguise(mc.player)), morph.toShortString() + ": attacking didn't animate the disguise");
+		});
+		Morph.LOGGER.info("MORPH-TEST ok animation {}", morph.toShortString());
 	}
 
 	/** Unlock enough mobs to overflow the sidebar, open it with the key, scroll, and click a mob with the mouse. */
