@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"id": "morph",
 	"version": "${version}",
-	"name": "Morph",
+	"name": "Morphed",
 	"description": "Kill a mob, then morph into it: its body, its health, its abilities.",
 	"authors": [
 		"Noel Wilsson"

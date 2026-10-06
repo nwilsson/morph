@@ -1,4 +1,4 @@
-# Morph
+# Morphed
 
 A Fabric mod for Minecraft 26.3. Kill a mob to unlock it, then morph into it. You take its body, its health, its abilities and its weaknesses.
 
@@ -19,7 +19,7 @@ A Fabric mod for Minecraft 26.3. Kill a mob to unlock it, then morph into it. Yo
 | `M` | Open the morph sidebar |
 | `R` | Use the current morph's power |
 
-You can rebind both under *Options → Controls → Morph*.
+You can rebind both under *Options → Controls → Morphed*.
 
 ## Commands
 
@@ -34,7 +34,7 @@ You can rebind both under *Options → Controls → Morph*.
 
 1. Install [Fabric Loader](https://fabricmc.net/use/) 0.19.5 or newer for Minecraft 26.3.
 2. Put [Fabric API](https://modrinth.com/mod/fabric-api) in your `mods` folder.
-3. Download the Morph jar from the [releases page](../../releases), or build it yourself (see below), and put it in `mods` too.
+3. Download the Morphed jar from the [releases page](../../releases), or build it yourself (see below), and put it in `mods` too.
 
 Install the mod on both the client and the server.
 
@@ -47,6 +47,10 @@ You need JDK 25.
 ```
 
 The jar ends up in `build/libs/`. To launch a development client, run `./gradlew runClient`. To run the automated client tests, run `./gradlew runClientGameTest`.
+
+## Credits
+
+Morphed is inspired by [Morph](https://www.curseforge.com/minecraft/mc-mods/morph) by iChun, the original "kill a mob, become it" mod. Morphed is an independent reimplementation for modern Fabric and doesn't use any of its code.
 
 ## License
 
