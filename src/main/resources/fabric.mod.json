@@ -8,9 +8,9 @@
 		"Noel Wilsson"
 	],
 	"contact": {
-		"homepage": "https://github.com/nwilsson/morph",
-		"sources": "https://github.com/nwilsson/morph",
-		"issues": "https://github.com/nwilsson/morph/issues"
+		"homepage": "https://github.com/nwilsson/morphed",
+		"sources": "https://github.com/nwilsson/morphed",
+		"issues": "https://github.com/nwilsson/morphed/issues"
 	},
 	"license": "MIT",
 	"icon": "assets/morph/icon.png",
