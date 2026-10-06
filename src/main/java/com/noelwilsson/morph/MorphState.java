@@ -1,7 +1,10 @@
 package com.noelwilsson.morph;
 
+import com.mojang.serialization.Codec;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
@@ -10,6 +13,7 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
@@ -48,6 +52,26 @@ public final class MorphState {
 		.syncWith(MorphVariant.STREAM_CODEC, AttachmentSyncPredicate.all())
 		.buildAndRegister(Morph.id("current"));
 
+	/** Looks the player starred in the sidebar, for the radial menu. Survives death. */
+	public static final AttachmentType<List<MorphVariant>> FAVORITES = AttachmentRegistry.<List<MorphVariant>>builder()
+		.persistent(MorphVariant.CODEC.listOf())
+		.copyOnDeath()
+		.initializer(List::of)
+		.syncWith(MorphVariant.STREAM_CODEC.apply(ByteBufCodecs.list()), AttachmentSyncPredicate.targetOnly())
+		.buildAndRegister(Morph.id("favorites"));
+
+	/** The last mob the player was, so the toggle key can go back to it. Survives death. */
+	public static final AttachmentType<MorphVariant> LAST = AttachmentRegistry.<MorphVariant>builder()
+		.persistent(MorphVariant.CODEC)
+		.copyOnDeath()
+		.buildAndRegister(Morph.id("last"));
+
+	/** Kills so far of each mob not unlocked yet, by mob id, while morph:kills_to_unlock is above 1. Survives death. */
+	public static final AttachmentType<Map<String, Integer>> KILLS = AttachmentRegistry.<Map<String, Integer>>builder()
+		.persistent(Codec.unboundedMap(Codec.STRING, Codec.INT))
+		.copyOnDeath()
+		.buildAndRegister(Morph.id("kills"));
+
 	private static final Identifier HEALTH_MODIFIER = Morph.id("health");
 	private static final Identifier SPEED_MODIFIER = Morph.id("speed");
 	private static final Identifier JUMP_MODIFIER = Morph.id("jump");
@@ -75,8 +99,75 @@ public final class MorphState {
 		return player.getAttached(CURRENT);
 	}
 
+	/** Whether this mob can be a morph at all: a living mob, not a player, and not in #morph:blocked. */
 	public static boolean canMorphInto(EntityType<?> type) {
-		return type != EntityTypes.PLAYER && type != EntityTypes.MANNEQUIN && type != EntityTypes.ARMOR_STAND && DefaultAttributes.hasSupplier(type);
+		return type != EntityTypes.PLAYER && type != EntityTypes.MANNEQUIN && type != EntityTypes.ARMOR_STAND && DefaultAttributes.hasSupplier(type)
+			&& !MorphRules.isBlocked(type);
+	}
+
+	/**
+	 * Counts a kill toward unlocking this mob and returns the total so far. Only mobs with no look unlocked yet are
+	 * counted: once a mob is known, its other looks unlock on the first kill.
+	 */
+	public static int addKill(ServerPlayer player, EntityType<?> type) {
+		Map<String, Integer> kills = new HashMap<>(player.getAttachedOrElse(KILLS, Map.of()));
+		int count = kills.merge(BuiltInRegistries.ENTITY_TYPE.getKey(type).toString(), 1, Integer::sum);
+		player.setAttached(KILLS, Map.copyOf(kills));
+		return count;
+	}
+
+	private static void clearKills(ServerPlayer player, EntityType<?> type) {
+		Map<String, Integer> kills = player.getAttached(KILLS);
+		String key = BuiltInRegistries.ENTITY_TYPE.getKey(type).toString();
+		if (kills != null && kills.containsKey(key)) {
+			Map<String, Integer> updated = new HashMap<>(kills);
+			updated.remove(key);
+			player.setAttached(KILLS, Map.copyOf(updated));
+		}
+	}
+
+	/** morph:keep_morphs_on_death off: a dead player starts over, with no morphs, favourites or kill counts. */
+	public static void forgetAll(ServerPlayer player) {
+		player.removeAttached(UNLOCKED);
+		player.removeAttached(FAVORITES);
+		player.removeAttached(LAST);
+		player.removeAttached(KILLS);
+	}
+
+	public static boolean isFavorite(Player player, MorphVariant variant) {
+		return player.getAttachedOrElse(FAVORITES, List.of()).contains(variant);
+	}
+
+	/** Stars or unstars an unlocked look. Returns true if it's now a favourite. */
+	public static boolean toggleFavorite(ServerPlayer player, MorphVariant variant) {
+		List<MorphVariant> favorites = new ArrayList<>(player.getAttachedOrElse(FAVORITES, List.of()));
+		boolean added = !favorites.remove(variant);
+		if (added) {
+			if (!isUnlocked(player, variant)) {
+				return false;
+			}
+			favorites.add(variant);
+		}
+		player.setAttached(FAVORITES, List.copyOf(favorites));
+		return added;
+	}
+
+	/**
+	 * The toggle key: morphed, go back to yourself; yourself, become the last mob you were. Returns false if there is
+	 * nothing to go back to (never morphed, or that morph is locked or blocked now).
+	 */
+	public static boolean toggle(ServerPlayer player) {
+		if (player.getAttached(CURRENT) != null) {
+			unmorph(player);
+			return true;
+		}
+		MorphVariant last = player.getAttached(LAST);
+		EntityType<?> type = last == null ? null : last.type();
+		if (type == null || !canMorphInto(type) || !isUnlocked(player, last)) {
+			return false;
+		}
+		morph(player, last);
+		return true;
 	}
 
 	/** Unlocks the mob's default look. Returns true if this is a new unlock. */
@@ -93,6 +184,10 @@ public final class MorphState {
 		List<MorphVariant> updated = new ArrayList<>(unlocked);
 		updated.add(variant);
 		player.setAttached(UNLOCKED, List.copyOf(updated));
+		EntityType<?> type = variant.type();
+		if (type != null) {
+			clearKills(player, type);
+		}
 		return true;
 	}
 
@@ -121,6 +216,7 @@ public final class MorphState {
 		float before = player.getHealth();
 		clearAbilities(player);
 		player.setAttached(CURRENT, variant);
+		player.setAttached(LAST, variant);
 		MorphPowers.changedBody(player);
 		player.refreshDimensions();
 		apply(player);
@@ -167,6 +263,12 @@ public final class MorphState {
 		if (type == null) {
 			return;
 		}
+		// A datapack can block a mob while someone is it (/reload): put them back in their own body.
+		if (!canMorphInto(type)) {
+			unmorph(player);
+			player.sendSystemMessage(Component.literal("Morphing into ").append(type.getDescription()).append(" is turned off here."));
+			return;
+		}
 		@SuppressWarnings("unchecked")
 		AttributeSupplier mob = DefaultAttributes.getSupplier((EntityType<? extends LivingEntity>) type);
 		setModifier(player, Attributes.MAX_HEALTH, HEALTH_MODIFIER, mob.getValue(Attributes.MAX_HEALTH) - PLAYER_BASE_HEALTH,
@@ -186,6 +288,16 @@ public final class MorphState {
 		}
 		if (abilities.contains(MorphAbilities.Ability.JUMP)) {
 			setModifier(player, Attributes.JUMP_STRENGTH, JUMP_MODIFIER, 0.2, AttributeModifier.Operation.ADD_VALUE);
+		}
+		// With morph:allow_flight off, fliers flutter down instead. The rule can change while someone is in the air.
+		if (abilities.contains(MorphAbilities.Ability.FLY) && !MorphRules.allowFlight(player.level())) {
+			abilities.remove(MorphAbilities.Ability.FLY);
+			abilities.add(MorphAbilities.Ability.SLOW_FALL);
+			if (player.getAbilities().mayfly && !player.isCreative() && !player.isSpectator()) {
+				player.getAbilities().mayfly = false;
+				player.getAbilities().flying = false;
+				player.onUpdateAbilities();
+			}
 		}
 		if (abilities.contains(MorphAbilities.Ability.FLY) && !player.getAbilities().mayfly) {
 			player.getAbilities().mayfly = true;

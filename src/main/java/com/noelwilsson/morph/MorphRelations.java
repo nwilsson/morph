@@ -2,6 +2,8 @@ package com.noelwilsson.morph;
 
 import com.noelwilsson.morph.mixin.MobAccessor;
 import com.noelwilsson.morph.mixin.NearestAttackableTargetGoalAccessor;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
@@ -25,17 +27,30 @@ public final class MorphRelations {
 		return type != null && MorphTemplates.get(type, player.level()) instanceof Enemy;
 	}
 
+	/** The morph:monster_behavior gamerule. Clients don't have gamerules, and only the server's AI matters. */
+	private static MorphRules.MonsterBehavior behavior(Entity entity) {
+		return entity.level() instanceof ServerLevel level ? MorphRules.monsterBehavior(level) : MorphRules.MonsterBehavior.DISGUISE;
+	}
+
 	/**
 	 * Monsters treat a morphed player like the mob they look like: a zombie leaves a cow or another zombie alone but
 	 * still goes after a villager or iron golem. Whoever hits a monster gets fought back, whatever they look like.
+	 * With monster_behavior MONSTERS_ONLY, any monster body is left alone and any other is hunted; OFF changes nothing.
 	 */
 	public static boolean monsterIgnores(LivingEntity attacker, LivingEntity target) {
 		if (!(attacker instanceof Enemy) || !(target instanceof Player player) || attacker.getLastHurtByMob() == target) {
 			return false;
 		}
+		MorphRules.MonsterBehavior behavior = behavior(attacker);
+		if (behavior == MorphRules.MonsterBehavior.OFF) {
+			return false;
+		}
 		// Fleeing goes through canAttack too: a creeper that "can't attack" a cat can't see it to run from it.
 		if (attacker instanceof Creeper && scaresCreepers(player)) {
 			return false;
+		}
+		if (behavior == MorphRules.MonsterBehavior.MONSTERS_ONLY) {
+			return looksLikeMonster(player);
 		}
 		EntityType<?> type = MorphState.current(player);
 		LivingEntity body = type == null ? null : MorphTemplates.get(type, player.level());
@@ -66,12 +81,13 @@ public final class MorphRelations {
 
 	/** Village iron golems go after monster-morphed players, except creepers, like they do with real ones. */
 	public static boolean golemHunts(LivingEntity target) {
-		return looksLikeMonster(target) && MorphState.current((Player) target) != EntityTypes.CREEPER;
+		return looksLikeMonster(target) && MorphState.current((Player) target) != EntityTypes.CREEPER
+			&& behavior(target) != MorphRules.MonsterBehavior.OFF;
 	}
 
 	/** Creepers run from cats and ocelots, and from players who are one. */
 	public static boolean scaresCreepers(LivingEntity entity) {
-		if (!(entity instanceof Player player)) {
+		if (!(entity instanceof Player player) || behavior(player) == MorphRules.MonsterBehavior.OFF) {
 			return false;
 		}
 		EntityType<?> type = MorphState.current(player);

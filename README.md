@@ -10,7 +10,10 @@ A Fabric mod for Minecraft 26.3. Kill a mob to unlock it, then morph into it. Yo
 - **Powers.** Many mobs come with an active power on a cooldown. Blazes shoot fireballs, endermen teleport, creepers explode (you survive it), wardens use a sonic boom, skeletons shoot arrows, evokers summon fangs, goats ram, foxes pounce, sniffers dig up seeds, and dozens more.
 - **Weaknesses.** Zombies and skeletons burn in daylight. Fish dry out on land. Water hurts blazes and endermen. Healing potions hurt you as an undead mob.
 - **Mob relations.** Monsters treat you like the mob you look like. A zombie ignores you as a cow or another zombie but still attacks you as a villager. Creepers run from you as a cat, and village iron golems go after you as a monster. Hit a monster and it fights back no matter what you are.
-- **Morph sidebar.** Press `M` to open a panel with 3D previews of every unlocked morph, then click one to morph into it.
+- **Morph sidebar.** Press `M` to open a panel with 3D previews of every unlocked morph, then click one to morph into it. Type in the search box to find a mob, and press Enter to morph into the first match.
+- **Favourites.** In the sidebar, press `F` or middle-click a morph to star it. Starred morphs go to the top of the list. Hold the backtick key to get a ring of them around the cursor, point at one and let go.
+- **Quick toggle.** Press `B` to go back to yourself, and again to become the last mob you were.
+- **Server settings.** Gamerules for how many kills unlock a morph, losing morphs on death, morphing on unlock, flight and how monsters treat you. Datapack tags to block mobs or their powers.
 
 ## Controls
 
@@ -18,8 +21,11 @@ A Fabric mod for Minecraft 26.3. Kill a mob to unlock it, then morph into it. Yo
 | --- | --- |
 | `M` | Open the morph sidebar |
 | `R` | Use the current morph's power |
+| `B` | Toggle between yourself and your last morph |
+| `` ` `` (hold) | Ring of starred morphs: point at one and let go |
+| `F` or middle click | Star or unstar a morph (in the sidebar) |
 
-You can rebind both under *Options → Controls → Morphed*.
+You can rebind `M`, `R`, `B` and the backtick under *Options → Controls → Morphed*.
 
 ## Commands
 
@@ -29,6 +35,36 @@ You can rebind both under *Options → Controls → Morphed*.
 | `/morph <mob> [nbt]` | Morph into an unlocked mob, optionally a specific variant |
 | `/unmorph` | Return to your own body |
 | `/morph unlock <mob> [nbt]` | Unlock a morph without killing the mob (operators only) |
+
+## Gamerules
+
+Set these with `/gamerule`, or under *More World Options → Game Rules* when creating a world.
+
+| Gamerule | Default | Description |
+| --- | --- | --- |
+| `morph:kills_to_unlock` | `1` | Kills of a mob needed to unlock it. Other looks of a mob you already have unlock on one kill. |
+| `morph:keep_morphs_on_death` | `true` | When `false`, dying forgets every unlocked morph, starred morph and kill count. |
+| `morph:morph_on_unlock` | `false` | Turn into a mob as soon as you unlock it. |
+| `morph:allow_flight` | `true` | When `false`, flying mobs (parrots, blazes, ghasts...) get slow falling instead of flight. |
+| `morph:monster_behavior` | `DISGUISE` | `DISGUISE`: monsters treat you like the mob you look like. `MONSTERS_ONLY`: monsters leave you alone only while you're a monster. `OFF`: morphing doesn't change how mobs treat you. |
+
+## Datapack tags
+
+Both entity type tags are empty by default. Add mobs to them in a datapack, with `"replace": false`.
+
+| Tag | Effect |
+| --- | --- |
+| `#morph:blocked` | These mobs can't be unlocked or morphed into. Anyone who is one goes back to their own body. |
+| `#morph:powerless` | Morphing into these mobs works, but their active power is turned off. |
+
+For example, `data/morph/tags/entity_type/blocked.json`:
+
+```json
+{
+	"replace": false,
+	"values": ["minecraft:wither", "minecraft:ender_dragon"]
+}
+```
 
 ## Installation
 

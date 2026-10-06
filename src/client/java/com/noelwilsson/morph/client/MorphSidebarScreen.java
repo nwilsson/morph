@@ -1,46 +1,46 @@
 package com.noelwilsson.morph.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
-import com.noelwilsson.morph.Morph;
+import com.noelwilsson.morph.MorphFavoritePayload;
 import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphVariant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.navigation.ScreenPosition;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.renderer.entity.state.EntityRenderState;
-import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.util.Util;
 import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.attributes.DefaultAttributes;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.SpawnEggItem;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
- * A panel on the right edge of the screen: a slowly turning 3D preview on top, then the player's unlocked morphs, one
- * row per mob. A mob with several looks (sheep colours, cat variants) shows one of them and a "+N" badge; expanding it
- * opens a grid of 3D tiles, one per look. Scroll with the mouse wheel, click to morph. The world keeps running behind it.
+ * A panel on the right edge of the screen: a search box, a slowly turning 3D preview, then the player's unlocked
+ * morphs, one row per mob, starred ones first. A mob with several looks (sheep colours, cat variants) shows one of them
+ * and a "+N" badge; expanding it opens a grid of 3D tiles, one per look. Scroll with the mouse wheel, click to morph,
+ * F or middle-click to star a look for the radial menu. The world keeps running behind it.
  */
 public class MorphSidebarScreen extends Screen {
 	public static final int PANEL_WIDTH = 140;
-	public static final int HEADER_HEIGHT = 26;
+	public static final int HEADER_HEIGHT = 32;
+	/** The search box, below the title. */
+	public static final int SEARCH_TOP = 16;
+	public static final int SEARCH_HEIGHT = 12;
 	/** The preview takes a third of the screen, within these bounds, so short screens keep room for the list. */
 	private static final int PREVIEW_MIN_HEIGHT = 60;
 	private static final int PREVIEW_MAX_HEIGHT = 100;
@@ -54,16 +54,14 @@ public class MorphSidebarScreen extends Screen {
 
 	/** Seconds for one full turn of the preview. */
 	private static final float SPIN_SECONDS = 12;
-	/** Row icons and tiles stand turned a little, so you see the side of the mob as well as its face. */
-	private static final float ICON_YAW = (float) Math.toRadians(-30);
-	/** Looking down on the mob a little. */
-	private static final float TILT = (float) Math.toRadians(-12);
 	/** Entity IDs for the models, far from real (positive) IDs and from disguises (just below zero). */
 	private static final int MODEL_ID_BASE = Integer.MIN_VALUE / 2;
 
 	private static final int PANEL = 0xD0101418;
 	private static final int BORDER = 0xFF3A4450;
 	private static final int PREVIEW_BACK = 0x30000000;
+	private static final int SEARCH_BACK = 0x60000000;
+	private static final int SEARCH_FOCUSED = 0xFF6A7480;
 	private static final int HOVER = 0x40FFFFFF;
 	private static final int TILE_BACK = 0x18FFFFFF;
 	private static final int SELECTED = 0x5040C060;
@@ -71,6 +69,8 @@ public class MorphSidebarScreen extends Screen {
 	private static final int TEXT = 0xFFFFFFFF;
 	private static final int SUBTEXT = 0xFFB0B8C0;
 	private static final int HEART = 0xFFFF5555;
+	private static final int STAR = 0xFFFFD040;
+	private static final String STAR_MARK = "★";
 
 	/** One look of a mob; a null variant is "yourself". The model is null when the mob can't be made, then the icon shows. */
 	private record Look(@Nullable MorphVariant variant, String description, @Nullable LivingEntity model, ItemStack icon) {}
@@ -85,9 +85,13 @@ public class MorphSidebarScreen extends Screen {
 	/** What the mouse is over: a group's row (and maybe its arrow), or one tile of its grid. */
 	private record Hit(Group group, @Nullable Look tile, boolean arrow) {}
 
+	/** Every group, yourself first, then starred mobs, then the rest by name. */
+	private final List<Group> all = new ArrayList<>();
+	/** The groups the search lets through, in the same order. */
 	private final List<Group> groups = new ArrayList<>();
 	private @Nullable Group expanded;
 	private double scroll;
+	private @Nullable EditBox search;
 
 	public MorphSidebarScreen() {
 		super(Component.literal("Morphs"));
@@ -95,17 +99,17 @@ public class MorphSidebarScreen extends Screen {
 
 	@Override
 	protected void init() {
-		groups.clear();
-		groups.add(new Group(null, Component.literal("Yourself"), "Unmorph",
+		all.clear();
+		all.add(new Group(null, Component.literal("Yourself"), "Unmorph",
 			List.of(new Look(null, "", minecraft.player, new ItemStack(Items.PLAYER_HEAD)))));
 		Map<EntityType<?>, List<Look>> byType = new LinkedHashMap<>();
 		int id = MODEL_ID_BASE;
 		for (MorphVariant variant : minecraft.player.getAttachedOrElse(MorphState.UNLOCKED, List.<MorphVariant>of())) {
 			EntityType<?> type = variant.type();
-			if (type != null) {
-				ItemStack icon = SpawnEggItem.byId(type).map(ItemStack::new).orElseGet(() -> new ItemStack(Items.BARRIER));
+			// A server can block a mob after it was unlocked (#morph:blocked); it can't be picked, so it isn't listed.
+			if (type != null && MorphState.canMorphInto(type)) {
 				byType.computeIfAbsent(type, t -> new ArrayList<>())
-					.add(new Look(variant, variant.describe(minecraft.level), model(type, variant, id++), icon));
+					.add(new Look(variant, variant.describe(minecraft.level), MorphPreviews.model(type, variant, id++), MorphPreviews.icon(type)));
 			}
 		}
 		List<Group> mobs = new ArrayList<>();
@@ -113,8 +117,18 @@ public class MorphSidebarScreen extends Screen {
 			looks.sort(Comparator.comparing((Look look) -> !look.variant().isDefault()).thenComparing(Look::description));
 			mobs.add(new Group(type, type.getDescription(), hearts(type), looks));
 		});
-		mobs.sort(Comparator.comparing(group -> group.name().getString()));
-		groups.addAll(mobs);
+		// Sorted once: starring a mob while the sidebar is open marks it but doesn't move rows under the mouse.
+		mobs.sort(Comparator.comparing((Group group) -> !isStarred(group)).thenComparing(group -> group.name().getString()));
+		all.addAll(mobs);
+
+		int searchLeft = panelLeft() + 9;
+		search = new EditBox(font, searchLeft, SEARCH_TOP + 2, width - 9 - searchLeft, font.lineHeight, search, Component.literal("Search"));
+		search.setBordered(false);
+		search.setMaxLength(50);
+		search.setHint(Component.literal("Search · F to star").withStyle(EditBox.SEARCH_HINT_STYLE));
+		search.setResponder(text -> filter());
+		addWidget(search);
+		filter();
 
 		// Open with the current morph's looks spread out and in view.
 		Group current = groupOf(MorphState.currentVariant(minecraft.player));
@@ -123,17 +137,31 @@ public class MorphSidebarScreen extends Screen {
 		scroll = clampScroll(top - (listHeight() - groupHeight(current == null ? groups.getFirst() : current)) / 2.0);
 	}
 
-	private @Nullable LivingEntity model(EntityType<?> type, MorphVariant variant, int id) {
-		try {
-			LivingEntity entity = MorphVariant.create(type, variant.data(), minecraft.level);
-			if (entity != null) {
-				entity.setId(id);
+	/** Shows only the mobs whose name, or the description of one of their looks, holds the search text. */
+	private void filter() {
+		String query = search == null ? "" : search.getValue().trim().toLowerCase(Locale.ROOT);
+		groups.clear();
+		for (Group group : all) {
+			if (query.isEmpty() || matches(group, query)) {
+				groups.add(group);
 			}
-			return entity;
-		} catch (RuntimeException e) {
-			Morph.LOGGER.debug("Couldn't make a sidebar model of {}", variant.snbt(), e);
-			return null;
 		}
+		if (expanded != null && !groups.contains(expanded)) {
+			expanded = null;
+		}
+		scroll = clampScroll(query.isEmpty() ? scroll : 0);
+	}
+
+	private static boolean matches(Group group, String query) {
+		if (group.name().getString().toLowerCase(Locale.ROOT).contains(query)) {
+			return true;
+		}
+		for (Look look : group.looks()) {
+			if (look.description().toLowerCase(Locale.ROOT).contains(query)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	@SuppressWarnings("unchecked")
@@ -144,6 +172,19 @@ public class MorphSidebarScreen extends Screen {
 		double health = DefaultAttributes.getSupplier((EntityType<? extends LivingEntity>) type).getValue(Attributes.MAX_HEALTH);
 		double hearts = health / 2.0;
 		return "❤ " + (hearts == Math.floor(hearts) ? String.valueOf((int) hearts) : String.valueOf(hearts));
+	}
+
+	private boolean isStarred(Look look) {
+		return look.variant() != null && MorphState.isFavorite(minecraft.player, look.variant());
+	}
+
+	private boolean isStarred(Group group) {
+		for (Look look : group.looks()) {
+			if (isStarred(look)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public int panelLeft() {
@@ -242,14 +283,19 @@ public class MorphSidebarScreen extends Screen {
 		return group.looks().getFirst();
 	}
 
-	/** Top y of a mob's row on screen, after scrolling. Null type is "yourself". */
+	/** Top y of a mob's row on screen, after scrolling, or -1 if it isn't listed. Null type is "yourself". */
 	public int rowTop(@Nullable EntityType<?> type) {
-		Group group = type == null ? groups.getFirst() : groupOf(type);
-		return group == null ? -1 : listTop() + offsetOf(group) - (int) scroll;
+		Group group = type == null ? all.getFirst() : groupOf(type);
+		return group == null || !groups.contains(group) ? -1 : listTop() + offsetOf(group) - (int) scroll;
 	}
 
 	public boolean isExpanded(EntityType<?> type) {
 		return expanded != null && expanded.type() == type;
+	}
+
+	/** The mobs the search lets through, in list order. Null is "yourself". */
+	public List<@Nullable EntityType<?>> listed() {
+		return groups.stream().<@Nullable EntityType<?>>map(Group::type).toList();
 	}
 
 	/** The middle of a look's tile on screen, or null if its mob isn't expanded. */
@@ -299,13 +345,18 @@ public class MorphSidebarScreen extends Screen {
 		graphics.fill(left, 0, left + 1, height, BORDER);
 
 		int unlocked = 0;
-		for (Group group : groups.subList(1, groups.size())) {
+		for (Group group : all.subList(1, all.size())) {
 			unlocked += group.looks().size();
 		}
-		graphics.text(font, Component.literal("Morphs"), left + 8, 6, TEXT);
+		graphics.text(font, Component.literal("Morphs"), left + 8, 5, TEXT);
 		String count = String.valueOf(unlocked);
-		graphics.text(font, count, width - 8 - font.width(count), 6, SUBTEXT);
-		graphics.text(font, Component.literal("Click to morph"), left + 8, 16, SUBTEXT);
+		graphics.text(font, count, width - 8 - font.width(count), 5, SUBTEXT);
+		int searchBottom = SEARCH_TOP + SEARCH_HEIGHT;
+		graphics.fill(left + 6, SEARCH_TOP, width - 6, searchBottom, SEARCH_BACK);
+		if (search.isFocused()) {
+			graphics.outline(left + 6, SEARCH_TOP, PANEL_WIDTH - 12, SEARCH_HEIGHT, SEARCH_FOCUSED);
+		}
+		search.extractRenderState(graphics, mouseX, mouseY, a);
 		graphics.fill(left + 1, HEADER_HEIGHT - 1, width, HEADER_HEIGHT, BORDER);
 
 		MorphVariant current = MorphState.currentVariant(minecraft.player);
@@ -325,10 +376,12 @@ public class MorphSidebarScreen extends Screen {
 		}
 		graphics.disableScissor();
 
-		if (groups.size() == 1) {
+		if (all.size() == 1 && groups.size() == 1) {
 			int top = rowTop(null) + ENTRY_HEIGHT;
 			graphics.text(font, Component.literal("Kill a mob"), left + 8, top + 4, SUBTEXT);
 			graphics.text(font, Component.literal("to unlock it"), left + 8, top + 14, SUBTEXT);
+		} else if (groups.isEmpty()) {
+			graphics.text(font, Component.literal("No morph matches"), left + 8, listTop() + 6, SUBTEXT);
 		}
 
 		// Scrollbar, only when the list overflows.
@@ -350,7 +403,7 @@ public class MorphSidebarScreen extends Screen {
 			group = hovered.group();
 			look = hovered.tile() != null ? hovered.tile() : shown(group);
 		} else {
-			group = Objects.requireNonNullElse(groupOf(current), groups.getFirst());
+			group = Objects.requireNonNullElse(groupOf(current), all.getFirst());
 			look = shown(group);
 		}
 		int left = panelLeft();
@@ -358,7 +411,10 @@ public class MorphSidebarScreen extends Screen {
 		int bottom = top + previewHeight();
 		graphics.fill(left + 1, top, width, bottom, PREVIEW_BACK);
 		float spin = (Util.getMillis() % (long) (SPIN_SECONDS * 1000)) / (SPIN_SECONDS * 1000) * Mth.TWO_PI;
-		extractModel(graphics, look, left + 10, top + 4, width - 10, bottom - 26, spin);
+		MorphPreviews.extract(graphics, look.model(), look.icon(), left + 10, top + 4, width - 10, bottom - 26, spin);
+		if (isStarred(look)) {
+			graphics.text(font, STAR_MARK, width - 6 - font.width(STAR_MARK), top + 4, STAR);
+		}
 
 		int middle = left + PANEL_WIDTH / 2;
 		graphics.centeredText(font, font.plainSubstrByWidth(group.name().getString(), PANEL_WIDTH - 8), middle, bottom - 23, TEXT);
@@ -385,7 +441,7 @@ public class MorphSidebarScreen extends Screen {
 		} else if (hovered != null && hovered.group() == group && hovered.tile() == null) {
 			graphics.fill(left + 1, top, width, top + ENTRY_HEIGHT, HOVER);
 		}
-		extractModel(graphics, look, left + 6, top + 2, left + 26, top + 22, ICON_YAW);
+		MorphPreviews.extract(graphics, look.model(), look.icon(), left + 6, top + 2, left + 26, top + 22, MorphPreviews.ICON_YAW);
 
 		int right = width - 6;
 		if (group.hasVariants()) {
@@ -396,6 +452,10 @@ public class MorphSidebarScreen extends Screen {
 			right = width - ARROW_WIDTH - 4;
 			graphics.text(font, badge, right - font.width(badge), top + 8, SUBTEXT);
 			right -= font.width(badge) + 4;
+		}
+		if (isStarred(group)) {
+			graphics.text(font, STAR_MARK, right - font.width(STAR_MARK), top + 8, STAR);
+			right -= font.width(STAR_MARK) + 3;
 		}
 		graphics.text(font, font.plainSubstrByWidth(group.name().getString(), right - left - 30), left + 30, top + 3, TEXT);
 		graphics.text(font, group.hearts(), left + 30, top + 13, group.type() == null ? SUBTEXT : HEART);
@@ -412,47 +472,11 @@ public class MorphSidebarScreen extends Screen {
 			if (Objects.equals(look.variant(), current)) {
 				graphics.outline(x, y, TILE, TILE, SELECTED_EDGE);
 			}
-			extractModel(graphics, look, x + 1, y + 1, x + TILE - 1, y + TILE - 1, ICON_YAW);
-		}
-	}
-
-	/** Draws a look's mob standing in the box, scaled to fit, turned by yaw. Falls back to the spawn egg. */
-	private void extractModel(GuiGraphicsExtractor graphics, Look look, int x0, int y0, int x1, int y1, float yaw) {
-		LivingEntity model = look.model();
-		EntityRenderState state = null;
-		if (model != null) {
-			try {
-				state = minecraft.getEntityRenderDispatcher().getRenderer(model).createRenderState(model, 1.0F);
-			} catch (RuntimeException e) {
-				Morph.LOGGER.debug("Couldn't draw a sidebar model of {}", model.getType(), e);
+			MorphPreviews.extract(graphics, look.model(), look.icon(), x + 1, y + 1, x + TILE - 1, y + TILE - 1, MorphPreviews.ICON_YAW);
+			if (isStarred(look)) {
+				graphics.text(font, STAR_MARK, x + TILE - 1 - font.width(STAR_MARK), y + 1, STAR);
 			}
 		}
-		if (state == null) {
-			graphics.item(look.icon(), (x0 + x1) / 2 - 8, (y0 + y1) / 2 - 8);
-			return;
-		}
-		state.shadowPieces.clear();
-		state.outlineColor = 0;
-		if (state instanceof LivingEntityRenderState living) {
-			living.bodyRot = 180.0F;
-			living.yRot = 0.0F;
-			living.xRot = 0.0F;
-			living.boundingBoxWidth /= living.scale;
-			living.boundingBoxHeight /= living.scale;
-			living.scale = 1.0F;
-		}
-		float boxWidth = state.boundingBoxWidth;
-		float boxHeight = state.boundingBoxHeight;
-		// A morphed player's hitbox is the mob's; the model drawn is still a player.
-		if (model instanceof Player) {
-			boxWidth = EntityTypes.PLAYER.getWidth();
-			boxHeight = EntityTypes.PLAYER.getHeight();
-		}
-		// Turning, the corners of the hitbox sweep out its diagonal.
-		float size = Math.min((y1 - y0) * 0.85F / Math.max(boxHeight, 0.1F), (x1 - x0) * 0.9F / Math.max(boxWidth * Mth.SQRT_OF_TWO, 0.1F));
-		Quaternionf tilt = new Quaternionf().rotateX(TILT);
-		Quaternionf rotation = new Quaternionf().rotateZ(Mth.PI).mul(tilt).rotateY(yaw);
-		graphics.entity(state, size, new Vector3f(0.0F, boxHeight / 2.0F, 0.0F), rotation, tilt, x0, y0, x1, y1);
 	}
 
 	@Override
@@ -474,7 +498,11 @@ public class MorphSidebarScreen extends Screen {
 				onClose();
 				return true;
 			}
-			return super.mouseClicked(event, doubleClick);
+			// The search box, or empty panel space, which takes the focus off the search box.
+			if (!super.mouseClicked(event, doubleClick)) {
+				clearFocus();
+			}
+			return true;
 		}
 		// The arrow, or a right click anywhere on the row, opens or closes the mob's looks.
 		if (hit.tile() == null && hit.group().hasVariants() && (hit.arrow() || event.button() == InputConstants.MOUSE_BUTTON_RIGHT)) {
@@ -485,26 +513,65 @@ public class MorphSidebarScreen extends Screen {
 			}
 			return true;
 		}
+		Look look = hit.tile() != null ? hit.tile() : shown(hit.group());
+		if (event.button() == InputConstants.MOUSE_BUTTON_MIDDLE) {
+			star(look);
+			return true;
+		}
 		if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
 			return true;
 		}
-		MorphVariant variant = (hit.tile() != null ? hit.tile() : shown(hit.group())).variant();
-		if (variant == null) {
-			minecraft.player.connection.sendCommand("unmorph");
-		} else {
-			minecraft.player.connection.sendCommand("morph " + variant.id() + (variant.isDefault() ? "" : " " + variant.snbt()));
-		}
-		onClose();
+		pick(look);
 		return true;
+	}
+
+	/** Morphs into the look and closes the sidebar. */
+	private void pick(Look look) {
+		MorphClient.morphInto(look.variant());
+		onClose();
+	}
+
+	/** Stars or unstars a look. The server keeps the list; the star shows once it syncs back. */
+	private void star(Look look) {
+		if (look.variant() != null && ClientPlayNetworking.canSend(MorphFavoritePayload.TYPE)) {
+			ClientPlayNetworking.send(new MorphFavoritePayload(look.variant()));
+		}
 	}
 
 	@Override
 	public boolean keyPressed(KeyEvent event) {
+		if (search.isFocused()) {
+			if (event.key() == InputConstants.KEY_RETURN || event.key() == InputConstants.KEY_NUMPADENTER) {
+				// Enter picks the first match: open, type "cre", Enter, and you're a creeper.
+				Group first = groups.stream().filter(group -> group.type() != null).findFirst().orElse(null);
+				if (first != null && !search.getValue().isBlank()) {
+					pick(shown(first));
+				}
+				return true;
+			}
+			if (event.isEscape() && !search.getValue().isEmpty()) {
+				search.setValue("");
+				return true;
+			}
+			return super.keyPressed(event);
+		}
 		if (MorphClient.OPEN_SIDEBAR.matches(event)) {
 			onClose();
 			return true;
 		}
+		if (event.key() == InputConstants.KEY_F) {
+			Hit hit = hitAt(minecraft.mouseHandler.getScaledXPos(minecraft.getWindow()), minecraft.mouseHandler.getScaledYPos(minecraft.getWindow()));
+			if (hit != null) {
+				star(hit.tile() != null ? hit.tile() : shown(hit.group()));
+			}
+			return true;
+		}
 		return super.keyPressed(event);
+	}
+
+	/** Focuses the search box, as clicking it would. */
+	public void focusSearch() {
+		setFocused(search);
 	}
 
 	@Override

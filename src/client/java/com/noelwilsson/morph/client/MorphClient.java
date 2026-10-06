@@ -6,6 +6,7 @@ import com.noelwilsson.morph.MorphFlapPayload;
 import com.noelwilsson.morph.MorphPowerPayload;
 import com.noelwilsson.morph.MorphPowers;
 import com.noelwilsson.morph.MorphState;
+import com.noelwilsson.morph.MorphTogglePayload;
 import com.noelwilsson.morph.MorphVariant;
 import java.util.HashMap;
 import java.util.Map;
@@ -44,6 +45,12 @@ public class MorphClient implements ClientModInitializer {
 		new KeyMapping("key.morph.sidebar", InputConstants.KEY_M, CATEGORY));
 	public static final KeyMapping USE_POWER = KeyMappingHelper.registerKeyMapping(
 		new KeyMapping("key.morph.power", InputConstants.KEY_R, CATEGORY));
+	/** Back to yourself, or back into the last mob you were. Not G: 26.3 uses it for quick actions. */
+	public static final KeyMapping TOGGLE = KeyMappingHelper.registerKeyMapping(
+		new KeyMapping("key.morph.toggle", InputConstants.KEY_B, CATEGORY));
+	/** Hold for a ring of starred morphs, like iChun's Morph's favourites menu on the same key. */
+	public static final KeyMapping RADIAL = KeyMappingHelper.registerKeyMapping(
+		new KeyMapping("key.morph.radial", InputConstants.KEY_GRAVE, CATEGORY));
 
 	private static final Map<UUID, Entity> DISGUISES = new HashMap<>();
 	private static final Map<UUID, EntityType<?>> LAST_MORPH = new HashMap<>();
@@ -77,11 +84,21 @@ public class MorphClient implements ClientModInitializer {
 				minecraft.gui.setScreen(new MorphSidebarScreen());
 			}
 		}
+		while (RADIAL.consumeClick()) {
+			if (minecraft.player != null && minecraft.gui.screen() == null) {
+				minecraft.gui.setScreen(new MorphRadialScreen());
+			}
+		}
 		flap(minecraft);
 		while (USE_POWER.consumeClick()) {
 			if (minecraft.player != null && MorphPowers.of(MorphState.current(minecraft.player)) != null
 				&& ClientPlayNetworking.canSend(MorphPowerPayload.TYPE)) {
 				ClientPlayNetworking.send(MorphPowerPayload.INSTANCE);
+			}
+		}
+		while (TOGGLE.consumeClick()) {
+			if (minecraft.player != null && ClientPlayNetworking.canSend(MorphTogglePayload.TYPE)) {
+				ClientPlayNetworking.send(MorphTogglePayload.INSTANCE);
 			}
 		}
 		ClientLevel level = minecraft.level;
@@ -229,6 +246,19 @@ public class MorphClient implements ClientModInitializer {
 			DISGUISES.put(player.getUUID(), disguise);
 		}
 		return disguise;
+	}
+
+	/** Asks the server to morph into this look, or back to yourself for null. Goes through the commands, which check it. */
+	public static void morphInto(@Nullable MorphVariant variant) {
+		Minecraft minecraft = Minecraft.getInstance();
+		if (minecraft.player == null) {
+			return;
+		}
+		if (variant == null) {
+			minecraft.player.connection.sendCommand("unmorph");
+		} else {
+			minecraft.player.connection.sendCommand("morph " + variant.id() + (variant.isDefault() ? "" : " " + variant.snbt()));
+		}
 	}
 
 	/** Plays an entity event on the player's disguise, as if the server had sent it for a real mob. */

@@ -12,6 +12,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,11 +29,29 @@ public class Morph implements ModInitializer {
 	public void onInitialize() {
 		MorphState.init();
 		MorphPowers.init();
+		MorphRules.init();
 
 		PayloadTypeRegistry.serverboundPlay().register(MorphPowerPayload.TYPE, MorphPowerPayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(MorphPowerPayload.TYPE, (payload, context) -> MorphPowers.use(context.player()));
 		PayloadTypeRegistry.serverboundPlay().register(MorphFlapPayload.TYPE, MorphFlapPayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(MorphFlapPayload.TYPE, (payload, context) -> MorphPowers.flap(context.player()));
+		PayloadTypeRegistry.serverboundPlay().register(MorphFavoritePayload.TYPE, MorphFavoritePayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(MorphFavoritePayload.TYPE,
+			(payload, context) -> MorphState.toggleFavorite(context.player(), payload.variant()));
+		PayloadTypeRegistry.serverboundPlay().register(MorphTogglePayload.TYPE, MorphTogglePayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(MorphTogglePayload.TYPE, (payload, context) -> {
+			ServerPlayer player = context.player();
+			if (!player.isAlive() || player.isSpectator()) {
+				return;
+			}
+			if (!MorphState.toggle(player)) {
+				player.sendOverlayMessage(Component.literal("No morph to go back to yet"));
+			} else {
+				EntityType<?> type = MorphState.current(player);
+				player.sendOverlayMessage(type == null ? Component.literal("You're yourself again")
+					: Component.literal("You are now a ").append(type.getDescription()));
+			}
+		});
 		PayloadTypeRegistry.clientboundPlay().register(MorphAnimationPayload.TYPE, MorphAnimationPayload.CODEC);
 
 		// Attacking an entity plays the mob's own attack animation on the disguise.
@@ -55,13 +74,36 @@ public class Morph implements ModInitializer {
 				return;
 			}
 			MorphVariant variant = MorphVariant.of(entity);
-			if (MorphState.unlock(player, variant)) {
-				String look = variant.describe(player.level());
-				String command = "/morph " + variant.id().getPath() + (variant.isDefault() ? "" : " " + variant.snbt());
-				player.sendSystemMessage(Component.literal("Unlocked morph: ").append(entity.getType().getDescription())
-					.append(look.isEmpty() ? "" : " (" + look + ")")
-					.append(Component.literal("  " + command).withStyle(ChatFormatting.GRAY)));
-				LOGGER.info("{} unlocked morph {} {}", player.getName().getString(), entity.getType(), variant.snbt());
+			if (MorphState.isUnlocked(player, variant)) {
+				return;
+			}
+			// morph:kills_to_unlock counts kills of a mob until it's known; after that, new looks unlock on one kill.
+			int needed = MorphRules.killsToUnlock(player.level());
+			if (needed > 1 && !MorphState.isUnlocked(player, entity.getType())) {
+				int kills = MorphState.addKill(player, entity.getType());
+				if (kills < needed) {
+					player.sendOverlayMessage(Component.empty().append(entity.getType().getDescription())
+						.append(": " + kills + "/" + needed + " kills to unlock"));
+					return;
+				}
+			}
+			MorphState.unlock(player, variant);
+			String look = variant.describe(player.level());
+			String command = "/morph " + variant.id().getPath() + (variant.isDefault() ? "" : " " + variant.snbt());
+			player.sendSystemMessage(Component.literal("Unlocked morph: ").append(entity.getType().getDescription())
+				.append(look.isEmpty() ? "" : " (" + look + ")")
+				.append(Component.literal("  " + command).withStyle(ChatFormatting.GRAY)));
+			LOGGER.info("{} unlocked morph {} {}", player.getName().getString(), entity.getType(), variant.snbt());
+			if (MorphRules.morphOnUnlock(player.level()) && player.isAlive()) {
+				MorphState.morph(player, variant);
+			}
+		});
+
+		// morph:keep_morphs_on_death off: a death forgets everything. Cleared off the dead body, so the copy-on-death
+		// attachments have nothing to carry over to the respawned player.
+		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
+			if (entity instanceof ServerPlayer player && !MorphRules.keepMorphsOnDeath(player.level())) {
+				MorphState.forgetAll(player);
 			}
 		});
 

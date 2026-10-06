@@ -346,7 +346,7 @@ public final class MorphPowers {
 	}
 
 	public static @Nullable Power of(@Nullable EntityType<?> type) {
-		if (type == null) {
+		if (type == null || MorphRules.isPowerless(type)) {
 			return null;
 		}
 		var id = BuiltInRegistries.ENTITY_TYPE.getKey(type);

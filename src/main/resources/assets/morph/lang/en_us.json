@@ -1,5 +1,21 @@
 {
 	"key.morph.sidebar": "Open morph sidebar",
 	"key.category.morph.morph": "Morphed",
-	"key.morph.power": "Use morph power"
+	"key.morph.power": "Use morph power",
+	"key.morph.toggle": "Toggle last morph",
+	"key.morph.radial": "Favourite morphs (hold)",
+	"gamerule.category.morph.morph": "Morphed",
+	"gamerule.morph.kills_to_unlock": "Kills to unlock a morph",
+	"gamerule.morph.kills_to_unlock.description": "How many of a mob you must kill before you can morph into it. Other looks of a mob you already know unlock on one kill.",
+	"gamerule.morph.keep_morphs_on_death": "Keep morphs on death",
+	"gamerule.morph.keep_morphs_on_death.description": "When off, dying forgets every unlocked morph, starred morph and kill count.",
+	"gamerule.morph.morph_on_unlock": "Morph on unlock",
+	"gamerule.morph.morph_on_unlock.description": "Turn into a mob as soon as you unlock it.",
+	"gamerule.morph.allow_flight": "Morphs can fly",
+	"gamerule.morph.allow_flight.description": "When off, flying mobs like parrots and blazes only flutter down slowly.",
+	"gamerule.morph.monster_behavior": "How monsters treat morphs",
+	"gamerule.morph.monster_behavior.description": "Disguise: like the mob you look like. Monsters only: only monster bodies are safe. Off: morphing changes nothing.",
+	"gamerule.morph.monster_behavior.disguise": "Disguise",
+	"gamerule.morph.monster_behavior.monsters_only": "Monsters only",
+	"gamerule.morph.monster_behavior.off": "Off"
 }

@@ -4,9 +4,11 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.noelwilsson.morph.Morph;
 import com.noelwilsson.morph.MorphAbilities;
 import com.noelwilsson.morph.MorphPowers;
+import com.noelwilsson.morph.MorphRules;
 import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphVariant;
 import com.noelwilsson.morph.client.MorphClient;
+import com.noelwilsson.morph.client.MorphRadialScreen;
 import com.noelwilsson.morph.client.MorphSidebarScreen;
 import java.util.HashSet;
 import java.util.List;
@@ -124,6 +126,11 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			phantom(ctx, world);
 			heldItems(ctx, world);
 			sidebar(ctx, world);
+			search(ctx, world);
+			favorites(ctx, world);
+			toggle(ctx, world);
+			rules(ctx, world);
+			death(ctx, world);
 		}
 		Morph.LOGGER.info("MORPH-TEST PASS");
 	}
@@ -597,6 +604,224 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
 		ctx.waitTicks(2);
 		check(ctx.computeOnClient(mc -> mc.gui.screen() == null), "the sidebar key didn't close the sidebar");
+	}
+
+	/** Typing in the search box narrows the list; M types instead of closing; Enter morphs into the first match. */
+	private static void search(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		command(world, "unmorph");
+		ctx.waitTicks(5);
+		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
+		ctx.waitForScreen(MorphSidebarScreen.class);
+		ctx.waitTicks(2);
+		double scale = ctx.computeOnClient(mc -> (double) mc.getWindow().getGuiScale());
+		int panelX = ctx.computeOnClient(mc -> sidebar(mc).panelLeft()) + 40;
+		click(ctx, scale, panelX, MorphSidebarScreen.SEARCH_TOP + MorphSidebarScreen.SEARCH_HEIGHT / 2.0);
+		ctx.waitTicks(2);
+		ctx.getInput().typeChars("m");
+		ctx.waitTicks(2);
+		check(ctx.computeOnClient(mc -> mc.gui.screen() instanceof MorphSidebarScreen), "typing m in the search box closed the sidebar");
+		ctx.getInput().pressKey(InputConstants.KEY_BACKSPACE);
+		ctx.getInput().typeChars("spid");
+		ctx.waitTicks(2);
+		List<EntityType<?>> listed = ctx.computeOnClient(mc -> sidebar(mc).listed());
+		check(listed.equals(List.of(EntityTypes.SPIDER)), "searching spid lists " + listed);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-search"));
+		ctx.getInput().pressKey(InputConstants.KEY_RETURN);
+		ctx.waitTicks(25);
+		world.getConnection().waitForClientboundPackets();
+		check(world.getServer().computeOnServer(s -> MorphState.current(world.getConnection().getServerPlayer())) == EntityTypes.SPIDER,
+			"Enter in the search box didn't morph into the match");
+		check(ctx.computeOnClient(mc -> mc.gui.screen() == null), "sidebar didn't close after Enter");
+		Morph.LOGGER.info("MORPH-TEST ok search");
+	}
+
+	/** F over a row stars it; the radial key shows starred morphs and letting go over one morphs into it. */
+	private static void favorites(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		// Only unlocked looks can be starred.
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			check(!MorphState.isUnlocked(player, EntityTypes.SNIFFER), "sniffer unlocked before the test");
+			check(!MorphState.toggleFavorite(player, MorphVariant.of(EntityTypes.SNIFFER)), "starred a locked sniffer");
+			check(player.getAttachedOrElse(MorphState.FAVORITES, List.of()).isEmpty(), "favourites not empty: "
+				+ player.getAttached(MorphState.FAVORITES));
+		});
+
+		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
+		ctx.waitForScreen(MorphSidebarScreen.class);
+		ctx.waitTicks(2);
+		double scale = ctx.computeOnClient(mc -> (double) mc.getWindow().getGuiScale());
+		int panelX = ctx.computeOnClient(mc -> sidebar(mc).panelLeft()) + 40;
+		int listTop = ctx.computeOnClient(mc -> sidebar(mc).listTop());
+		ctx.getInput().setCursorPos(panelX * scale, (listTop + 40) * scale);
+		for (int i = 0; i < 40 && ctx.computeOnClient(mc -> sidebar(mc).rowTop(EntityTypes.BLAZE)) < listTop; i++) {
+			ctx.getInput().scroll(1);
+			ctx.waitTicks(1);
+		}
+		int blazeTop = ctx.computeOnClient(mc -> sidebar(mc).rowTop(EntityTypes.BLAZE));
+		check(blazeTop >= listTop, "blaze row out of view: " + blazeTop);
+		ctx.getInput().setCursorPos(panelX * scale, (blazeTop + MorphSidebarScreen.ENTRY_HEIGHT / 2.0) * scale);
+		ctx.getInput().pressKey(InputConstants.KEY_F);
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.waitTicks(2);
+		check(world.getServer().computeOnServer(s -> MorphState.isFavorite(world.getConnection().getServerPlayer(), MorphVariant.of(EntityTypes.BLAZE))),
+			"F over the blaze row didn't star it");
+		check(ctx.computeOnClient(mc -> MorphState.isFavorite(mc.player, MorphVariant.of(EntityTypes.BLAZE))), "client: blaze star not synced");
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("sidebar-starred"));
+		ctx.getInput().pressKey(MorphClient.OPEN_SIDEBAR);
+		ctx.waitTicks(2);
+
+		// Hold the radial key, point at the blaze, let go.
+		ctx.getInput().holdKey(MorphClient.RADIAL);
+		ctx.waitForScreen(MorphRadialScreen.class);
+		ctx.waitTicks(2);
+		List<MorphRadialScreen.Entry> entries = ctx.computeOnClient(mc -> List.copyOf(((MorphRadialScreen) mc.gui.screen()).entries()));
+		check(entries.size() == 2 && entries.get(0).variant() == null && MorphVariant.of(EntityTypes.BLAZE).equals(entries.get(1).variant()),
+			"radial entries: " + entries.stream().map(entry -> entry.name().getString()).toList());
+		ScreenPosition blazeSlot = ctx.computeOnClient(mc -> ((MorphRadialScreen) mc.gui.screen()).slotCenter(1));
+		ctx.getInput().setCursorPos(blazeSlot.x() * scale, blazeSlot.y() * scale);
+		ctx.waitTicks(2);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("radial-blaze"));
+		ctx.getInput().releaseKey(MorphClient.RADIAL);
+		ctx.waitTicks(25);
+		world.getConnection().waitForClientboundPackets();
+		check(world.getServer().computeOnServer(s -> MorphState.current(world.getConnection().getServerPlayer())) == EntityTypes.BLAZE,
+			"letting go of the radial key over the blaze didn't morph into one");
+		check(ctx.computeOnClient(mc -> mc.gui.screen() == null), "radial menu still open after picking");
+
+		// Held, then let go in the middle: nothing changes.
+		ctx.getInput().holdKey(MorphClient.RADIAL);
+		ctx.waitForScreen(MorphRadialScreen.class);
+		int middleX = ctx.computeOnClient(mc -> mc.gui.screen().width / 2);
+		int middleY = ctx.computeOnClient(mc -> mc.gui.screen().height / 2);
+		ctx.getInput().setCursorPos(middleX * scale, middleY * scale);
+		ctx.waitTicks(8);
+		ctx.getInput().releaseKey(MorphClient.RADIAL);
+		ctx.waitTicks(5);
+		check(ctx.computeOnClient(mc -> mc.gui.screen() == null), "letting go in the middle didn't close the radial menu");
+		check(world.getServer().computeOnServer(s -> MorphState.current(world.getConnection().getServerPlayer())) == EntityTypes.BLAZE,
+			"letting go in the middle changed the morph");
+		Morph.LOGGER.info("MORPH-TEST ok favorites");
+	}
+
+	/** The toggle key goes back to yourself, then back into the last mob. */
+	private static void toggle(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		command(world, "morph spider");
+		ctx.waitTicks(5);
+		ctx.getInput().pressKey(MorphClient.TOGGLE);
+		ctx.waitTicks(5);
+		check(world.getServer().computeOnServer(s -> MorphState.current(world.getConnection().getServerPlayer())) == null,
+			"toggle didn't unmorph the spider");
+		ctx.getInput().pressKey(MorphClient.TOGGLE);
+		ctx.waitTicks(5);
+		check(world.getServer().computeOnServer(s -> MorphState.current(world.getConnection().getServerPlayer())) == EntityTypes.SPIDER,
+			"toggle didn't go back into the spider");
+		command(world, "unmorph");
+		ctx.waitTicks(2);
+		Morph.LOGGER.info("MORPH-TEST ok toggle");
+	}
+
+	/** The morph: gamerules: kills to unlock, morph on unlock, flight, monster behaviour. */
+	private static void rules(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		world.getServer().runCommand("gamerule morph:kills_to_unlock 3");
+		for (int i = 1; i <= 3; i++) {
+			kill(world, EntityTypes.POLAR_BEAR);
+			ctx.waitTicks(2);
+			int kills = i;
+			world.getServer().runOnServer(server -> {
+				ServerPlayer player = world.getConnection().getServerPlayer();
+				boolean unlocked = MorphState.isUnlocked(player, EntityTypes.POLAR_BEAR);
+				check(unlocked == (kills == 3), "polar bear unlocked: " + unlocked + " after " + kills + " of 3 kills");
+			});
+		}
+		check(world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().getAttachedOrElse(MorphState.KILLS, java.util.Map.of())
+			.isEmpty()), "kill count kept after unlocking");
+		world.getServer().runCommand("gamerule morph:kills_to_unlock 1");
+
+		world.getServer().runCommand("gamerule morph:morph_on_unlock true");
+		kill(world, EntityTypes.GOAT);
+		ctx.waitTicks(2);
+		check(world.getServer().computeOnServer(s -> MorphState.current(world.getConnection().getServerPlayer())) == EntityTypes.GOAT,
+			"morph_on_unlock didn't turn the player into the goat");
+		world.getServer().runCommand("gamerule morph:morph_on_unlock false");
+
+		world.getServer().runCommand("gamerule morph:allow_flight false");
+		command(world, "morph parrot");
+		ctx.waitTicks(25);
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			check(!player.getAbilities().mayfly, "parrot can fly with allow_flight off");
+			check(player.hasEffect(MobEffects.SLOW_FALLING), "parrot doesn't flutter with allow_flight off");
+		});
+		world.getServer().runCommand("gamerule morph:allow_flight true");
+		ctx.waitTicks(25);
+		check(world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().getAbilities().mayfly),
+			"parrot can't fly after allow_flight went back on");
+
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			ServerLevel level = player.level();
+			Zombie zombie = EntityTypes.ZOMBIE.create(level, EntitySpawnReason.COMMAND);
+			zombie.setPos(player.getX() + 4, player.getY(), player.getZ());
+			level.addFreshEntity(zombie);
+			MorphState.morph(player, EntityTypes.COW);
+			check(!zombie.canAttack(player), "disguise: zombie attacks a cow");
+			server.getGameRules().set(MorphRules.MONSTER_BEHAVIOR, MorphRules.MonsterBehavior.MONSTERS_ONLY, server);
+			check(zombie.canAttack(player), "monsters_only: zombie ignores a cow");
+			MorphState.morph(player, EntityTypes.ZOMBIE);
+			check(!zombie.canAttack(player), "monsters_only: zombie attacks a zombie");
+			server.getGameRules().set(MorphRules.MONSTER_BEHAVIOR, MorphRules.MonsterBehavior.OFF, server);
+			check(zombie.canAttack(player), "off: zombie ignores a zombie");
+			server.getGameRules().set(MorphRules.MONSTER_BEHAVIOR, MorphRules.MonsterBehavior.DISGUISE, server);
+			zombie.discard();
+			MorphState.unmorph(player);
+		});
+		// The enum rule takes its constant names on the command line.
+		world.getServer().runCommand("gamerule morph:monster_behavior OFF");
+		check(world.getServer().computeOnServer(s -> s.getGameRules().get(MorphRules.MONSTER_BEHAVIOR)) == MorphRules.MonsterBehavior.OFF,
+			"/gamerule didn't set monster_behavior");
+		world.getServer().runCommand("gamerule morph:monster_behavior DISGUISE");
+		Morph.LOGGER.info("MORPH-TEST ok rules");
+	}
+
+	/** Morphs survive death by default; with keep_morphs_on_death off, a death forgets them. Runs last: it wipes the unlocks. */
+	private static void death(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		world.getServer().runCommand("gamerule immediate_respawn true");
+		world.getServer().runCommand("kill @a");
+		ctx.waitTicks(20);
+		world.getConnection().waitForClientboundPackets();
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			check(player.isAlive(), "player didn't respawn");
+			check(MorphState.isUnlocked(player, EntityTypes.SPIDER), "a death forgot morphs with keep_morphs_on_death on");
+			check(MorphState.isFavorite(player, MorphVariant.of(EntityTypes.BLAZE)), "a death forgot the starred blaze");
+		});
+		world.getServer().runCommand("gamerule morph:keep_morphs_on_death false");
+		world.getServer().runCommand("kill @a");
+		ctx.waitTicks(20);
+		world.getConnection().waitForClientboundPackets();
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			check(player.isAlive(), "player didn't respawn");
+			check(player.getAttachedOrElse(MorphState.UNLOCKED, List.of()).isEmpty(), "keep_morphs_on_death off: morphs kept "
+				+ player.getAttached(MorphState.UNLOCKED));
+			check(player.getAttachedOrElse(MorphState.FAVORITES, List.of()).isEmpty(), "keep_morphs_on_death off: favourites kept");
+		});
+		ctx.runOnClient(mc -> check(mc.player.getAttachedOrElse(MorphState.UNLOCKED, List.of()).isEmpty(), "client: morphs not cleared"));
+		world.getServer().runCommand("gamerule morph:keep_morphs_on_death true");
+		Morph.LOGGER.info("MORPH-TEST ok death");
+	}
+
+	/** Spawns a mob next to the player and kills it as the player. */
+	private static void kill(TestSingleplayerContext world, EntityType<?> type) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			ServerLevel level = player.level();
+			Entity entity = type.create(level, EntitySpawnReason.COMMAND);
+			entity.setPos(player.getX() + 2, player.getY(), player.getZ());
+			level.addFreshEntity(entity);
+			entity.hurtServer(level, player.damageSources().playerAttack(player), 1000);
+		});
 	}
 
 	private static MorphSidebarScreen sidebar(Minecraft mc) {
