@@ -7,6 +7,11 @@
 	"authors": [
 		"Noel Wilsson"
 	],
+	"contact": {
+		"homepage": "https://github.com/nwilsson/morph",
+		"sources": "https://github.com/nwilsson/morph",
+		"issues": "https://github.com/nwilsson/morph/issues"
+	},
 	"license": "MIT",
 	"icon": "assets/morph/icon.png",
 	"environment": "*",
