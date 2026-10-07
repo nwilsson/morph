@@ -2,6 +2,7 @@ package com.noelwilsson.morph.mixin;
 
 import com.noelwilsson.morph.MorphAbilities;
 import com.noelwilsson.morph.MorphRelations;
+import com.noelwilsson.morph.MorphSounds;
 import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphTemplates;
 import net.minecraft.server.level.ServerLevel;
@@ -153,6 +154,17 @@ abstract class LivingEntityMixin {
 			} else {
 				Vec3 motion = self.getDeltaMovement();
 				self.setDeltaMovement(motion.x * 0.5, Math.max(motion.y * 0.5 + 0.05, 0.16), motion.z * 0.5);
+			}
+		}
+	}
+
+	/** A ghast morph is heard from as far away as a ghast (MorphSounds). */
+	@Inject(method = "getSoundVolume", at = @At("HEAD"), cancellable = true)
+	private void morph$soundVolume(CallbackInfoReturnable<Float> cir) {
+		if ((Object) this instanceof Player player) {
+			LivingEntity voice = MorphSounds.voice(player);
+			if (voice != null) {
+				cir.setReturnValue(MorphSounds.volume(voice));
 			}
 		}
 	}

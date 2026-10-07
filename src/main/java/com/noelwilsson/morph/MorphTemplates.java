@@ -16,6 +16,9 @@ import org.jspecify.annotations.Nullable;
 public final class MorphTemplates {
 	private static final Map<EntityType<?>, LivingEntity> SERVER = new ConcurrentHashMap<>();
 	private static final Map<EntityType<?>, LivingEntity> CLIENT = new ConcurrentHashMap<>();
+	/** Templates with a look applied, for what depends on it: a baby zombie's voice is higher. */
+	private static final Map<MorphVariant, LivingEntity> SERVER_LOOKS = new ConcurrentHashMap<>();
+	private static final Map<MorphVariant, LivingEntity> CLIENT_LOOKS = new ConcurrentHashMap<>();
 
 	private MorphTemplates() {}
 
@@ -31,5 +34,33 @@ public final class MorphTemplates {
 			return living;
 		}
 		return null;
+	}
+
+	/** A template of this exact look, or of the plain mob if the look can't be applied. */
+	public static @Nullable LivingEntity get(MorphVariant variant, Level level) {
+		EntityType<?> type = variant.type();
+		if (type == null) {
+			return null;
+		}
+		if (variant.isDefault()) {
+			return get(type, level);
+		}
+		Map<MorphVariant, LivingEntity> cache = level.isClientSide() ? CLIENT_LOOKS : SERVER_LOOKS;
+		LivingEntity cached = cache.get(variant);
+		if (cached != null) {
+			return cached;
+		}
+		LivingEntity created;
+		try {
+			created = MorphVariant.create(type, variant.data(), level);
+		} catch (RuntimeException e) {
+			Morph.LOGGER.debug("Couldn't make a template of {}", variant.snbt(), e);
+			created = null;
+		}
+		if (created == null) {
+			return get(type, level);
+		}
+		cache.put(variant, created);
+		return created;
 	}
 }

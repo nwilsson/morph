@@ -1,0 +1,21 @@
+{
+	"parent": "morph:root",
+	"criteria": {
+		"unlocked": {
+			"trigger": "minecraft:impossible"
+		}
+	},
+	"display": {
+		"icon": {
+			"id": "minecraft:zombie_head"
+		},
+		"title": {
+			"translate": "advancements.morph.ten_morphs.title"
+		},
+		"description": {
+			"translate": "advancements.morph.ten_morphs.description"
+		},
+		"show_toast": true,
+		"announce_to_chat": true
+	}
+}

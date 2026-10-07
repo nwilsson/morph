@@ -1,0 +1,22 @@
+{
+	"parent": "morph:ten_morphs",
+	"criteria": {
+		"unlocked": {
+			"trigger": "minecraft:impossible"
+		}
+	},
+	"display": {
+		"icon": {
+			"id": "minecraft:creeper_head"
+		},
+		"title": {
+			"translate": "advancements.morph.fifty_morphs.title"
+		},
+		"description": {
+			"translate": "advancements.morph.fifty_morphs.description"
+		},
+		"frame": "goal",
+		"show_toast": true,
+		"announce_to_chat": true
+	}
+}

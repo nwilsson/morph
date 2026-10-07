@@ -6,6 +6,7 @@ import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.ChatFormatting;
@@ -53,6 +54,11 @@ public class Morph implements ModInitializer {
 			}
 		});
 		PayloadTypeRegistry.clientboundPlay().register(MorphAnimationPayload.TYPE, MorphAnimationPayload.CODEC);
+		PayloadTypeRegistry.clientboundPlay().register(MorphUnlockPayload.TYPE, MorphUnlockPayload.CODEC);
+
+		// Advancements for players who unlocked morphs before there were any.
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> MorphProgress.update(handler.player));
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> MorphSounds.forget(handler.player.getUUID()));
 
 		// Attacking an entity plays the mob's own attack animation on the disguise.
 		AttackEntityCallback.EVENT.register((player, level, hand, target, hit) -> {
@@ -88,11 +94,16 @@ public class Morph implements ModInitializer {
 				}
 			}
 			MorphState.unlock(player, variant);
-			String look = variant.describe(player.level());
-			String command = "/morph " + variant.id().getPath() + (variant.isDefault() ? "" : " " + variant.snbt());
-			player.sendSystemMessage(Component.literal("Unlocked morph: ").append(entity.getType().getDescription())
-				.append(look.isEmpty() ? "" : " (" + look + ")")
-				.append(Component.literal("  " + command).withStyle(ChatFormatting.GRAY)));
+			// A toast with the mob in it; a chat line for clients that can't show one.
+			if (ServerPlayNetworking.canSend(player, MorphUnlockPayload.TYPE)) {
+				ServerPlayNetworking.send(player, new MorphUnlockPayload(variant));
+			} else {
+				String look = variant.describe(player.level());
+				String command = "/morph " + variant.id().getPath() + (variant.isDefault() ? "" : " " + variant.snbt());
+				player.sendSystemMessage(Component.literal("Unlocked morph: ").append(entity.getType().getDescription())
+					.append(look.isEmpty() ? "" : " (" + look + ")")
+					.append(Component.literal("  " + command).withStyle(ChatFormatting.GRAY)));
+			}
 			LOGGER.info("{} unlocked morph {} {}", player.getName().getString(), entity.getType(), variant.snbt());
 			if (MorphRules.morphOnUnlock(player.level()) && player.isAlive()) {
 				MorphState.morph(player, variant);
@@ -109,6 +120,7 @@ public class Morph implements ModInitializer {
 
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			server.getPlayerList().getPlayers().forEach(MorphState::tickWeaknesses);
+			server.getPlayerList().getPlayers().forEach(MorphSounds::tick);
 			if (server.getTickCount() % 20 == 0) {
 				server.getPlayerList().getPlayers().forEach(MorphState::apply);
 			}

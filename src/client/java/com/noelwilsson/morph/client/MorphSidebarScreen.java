@@ -2,6 +2,7 @@ package com.noelwilsson.morph.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.noelwilsson.morph.MorphFavoritePayload;
+import com.noelwilsson.morph.MorphProgress;
 import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphVariant;
 import java.util.ArrayList;
@@ -11,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.EditBox;
@@ -92,6 +94,8 @@ public class MorphSidebarScreen extends Screen {
 	private @Nullable Group expanded;
 	private double scroll;
 	private @Nullable EditBox search;
+	/** "37/84": mobs collected out of every mob with a spawn egg (MorphProgress). */
+	private String progress = "";
 
 	public MorphSidebarScreen() {
 		super(Component.literal("Morphs"));
@@ -120,6 +124,8 @@ public class MorphSidebarScreen extends Screen {
 		// Sorted once: starring a mob while the sidebar is open marks it but doesn't move rows under the mouse.
 		mobs.sort(Comparator.comparing((Group group) -> !isStarred(group)).thenComparing(group -> group.name().getString()));
 		all.addAll(mobs);
+		Set<EntityType<?>> collectable = MorphProgress.collectable();
+		progress = MorphProgress.collected(minecraft.player, collectable) + "/" + collectable.size();
 
 		int searchLeft = panelLeft() + 9;
 		search = new EditBox(font, searchLeft, SEARCH_TOP + 2, width - 9 - searchLeft, font.lineHeight, search, Component.literal("Search"));
@@ -344,13 +350,8 @@ public class MorphSidebarScreen extends Screen {
 		graphics.fill(left, 0, width, height, PANEL);
 		graphics.fill(left, 0, left + 1, height, BORDER);
 
-		int unlocked = 0;
-		for (Group group : all.subList(1, all.size())) {
-			unlocked += group.looks().size();
-		}
 		graphics.text(font, Component.literal("Morphs"), left + 8, 5, TEXT);
-		String count = String.valueOf(unlocked);
-		graphics.text(font, count, width - 8 - font.width(count), 5, SUBTEXT);
+		graphics.text(font, progress, width - 8 - font.width(progress), 5, SUBTEXT);
 		int searchBottom = SEARCH_TOP + SEARCH_HEIGHT;
 		graphics.fill(left + 6, SEARCH_TOP, width - 6, searchBottom, SEARCH_BACK);
 		if (search.isFocused()) {

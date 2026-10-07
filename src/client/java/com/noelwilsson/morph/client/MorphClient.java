@@ -5,12 +5,17 @@ import com.noelwilsson.morph.MorphAnimationPayload;
 import com.noelwilsson.morph.MorphFlapPayload;
 import com.noelwilsson.morph.MorphPowerPayload;
 import com.noelwilsson.morph.MorphPowers;
+import com.noelwilsson.morph.MorphRules;
 import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphTogglePayload;
+import com.noelwilsson.morph.MorphUnlockPayload;
 import com.noelwilsson.morph.MorphVariant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
 import net.fabricmc.api.ClientModInitializer;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -21,11 +26,14 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
+import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
@@ -75,6 +83,7 @@ public class MorphClient implements ClientModInitializer {
 				animate(player, payload.event());
 			}
 		});
+		ClientPlayNetworking.registerGlobalReceiver(MorphUnlockPayload.TYPE, (payload, context) -> MorphUnlockToast.show(payload.variant()));
 		Morph.LOGGER.info("Morph client loaded");
 	}
 
@@ -109,6 +118,8 @@ public class MorphClient implements ClientModInitializer {
 			LAST_SWING.clear();
 			AGGRESSIVE_UNTIL.clear();
 			GLIDES.clear();
+			SEEN_LOOKS.clear();
+			TRANSITIONS.clear();
 			return;
 		}
 		for (Player player : level.players()) {
@@ -142,6 +153,9 @@ public class MorphClient implements ClientModInitializer {
 		LAST_SWING.keySet().retainAll(DISGUISES.keySet());
 		AGGRESSIVE_UNTIL.keySet().retainAll(DISGUISES.keySet());
 		GLIDES.keySet().retainAll(DISGUISES.keySet());
+		SEEN_LOOKS.keySet().removeIf(uuid -> level.getPlayerByUUID(uuid) == null);
+		TRANSITIONS.keySet().retainAll(SEEN_LOOKS.keySet());
+		TRANSITIONS.values().removeIf(transition -> level.getGameTime() - transition.start() > TRANSITION_TICKS);
 	}
 
 	/**
@@ -217,9 +231,22 @@ public class MorphClient implements ClientModInitializer {
 		return 0.0F;
 	}
 
-	/** The disguise to draw for this player, or null if they aren't morphed. */
+	/** The disguise to draw for this player, or null if they aren't morphed. Notices when they change body. */
 	public static @Nullable Entity disguise(Player player) {
 		MorphVariant variant = MorphState.currentVariant(player);
+		UUID uuid = player.getUUID();
+		// Not seen before (just joined, just came into view) isn't a change.
+		boolean changed = SEEN_LOOKS.containsKey(uuid) && !Objects.equals(SEEN_LOOKS.get(uuid), variant);
+		SEEN_LOOKS.put(uuid, variant);
+		Entity before = DISGUISES.get(uuid);
+		Entity disguise = makeDisguise(player, variant);
+		if (changed) {
+			startTransition(player, before, disguise);
+		}
+		return disguise;
+	}
+
+	private static @Nullable Entity makeDisguise(Player player, @Nullable MorphVariant variant) {
 		EntityType<?> type = variant == null ? null : variant.type();
 		if (type == null) {
 			DISGUISES.remove(player.getUUID());
@@ -246,6 +273,105 @@ public class MorphClient implements ClientModInitializer {
 			DISGUISES.put(player.getUUID(), disguise);
 		}
 		return disguise;
+	}
+
+	/** A change of body being drawn: the old body shrinks away as the new one grows in. A null from is the player. */
+	private record Transition(@Nullable Entity from, long start) {}
+
+	/** The look each player was last drawn with (null: themselves). A player missing here hasn't been seen yet. */
+	private static final Map<UUID, @Nullable MorphVariant> SEEN_LOOKS = new HashMap<>();
+	private static final Map<UUID, Transition> TRANSITIONS = new HashMap<>();
+	public static final int TRANSITION_TICKS = 15;
+	/** Share of the transition the old body takes to vanish, and where the new one starts to grow. They overlap. */
+	private static final float SHRINK_END = 0.6F;
+	private static final float GROW_START = 0.4F;
+	private static final float MIN_SCALE = 0.01F;
+
+	private static void startTransition(Player player, @Nullable Entity from, @Nullable Entity to) {
+		TRANSITIONS.put(player.getUUID(), new Transition(from, player.level().getGameTime()));
+		// A puff of smoke around the bigger of the two bodies. Not for an invisible player, or into your own eyes.
+		Minecraft minecraft = Minecraft.getInstance();
+		boolean ownView = minecraft.getCameraEntity() == player && minecraft.options.getCameraType().isFirstPerson();
+		if (player.isInvisible() || ownView) {
+			return;
+		}
+		Entity fromBody = from == null ? player : from;
+		Entity toBody = to == null ? player : to;
+		for (Entity body : List.of(fromBody, toBody)) {
+			if (body != player) {
+				sync(player, body);
+			}
+		}
+		Entity bigger = size(fromBody.getType()) >= size(toBody.getType()) ? fromBody : toBody;
+		if (bigger instanceof LivingEntity living) {
+			living.makePoofParticles();
+		}
+	}
+
+	private static float size(EntityType<?> type) {
+		return type.getWidth() * type.getWidth() * type.getHeight();
+	}
+
+	/** How far into its change of body this player is, 0 to 1, or -1 if they aren't changing. */
+	public static float transition(Player player, float partialTicks) {
+		Transition transition = TRANSITIONS.get(player.getUUID());
+		if (transition == null) {
+			return -1.0F;
+		}
+		float progress = (player.level().getGameTime() - transition.start() + partialTicks) / TRANSITION_TICKS;
+		return progress >= 1.0F ? -1.0F : Math.max(progress, 0.0F);
+	}
+
+	/**
+	 * What to draw for a player: their disguise (or themselves), with their name over it if morph:show_nametags is on,
+	 * and while they change body the old body too, shrinking away. extractor turns an entity into its render state.
+	 */
+	public static List<EntityRenderState> extract(Player player, float partialTicks, Function<Entity, EntityRenderState> extractor) {
+		Entity disguise = disguise(player);
+		if (disguise != null) {
+			sync(player, disguise);
+		}
+		EntityRenderState state = extractor.apply(disguise == null ? player : disguise);
+		if (disguise != null && MorphRules.clientRules(player.level()).showNametags()) {
+			EntityRenderState own = extractor.apply(player);
+			state.nameTag = own.nameTag;
+			state.nameTagAttachment = own.nameTagAttachment;
+			state.scoreText = own.scoreText;
+			state.isDiscrete = own.isDiscrete;
+		}
+		float progress = transition(player, partialTicks);
+		Transition transition = TRANSITIONS.get(player.getUUID());
+		if (progress < 0.0F || transition == null) {
+			return List.of(state);
+		}
+		scale(state, ease((progress - GROW_START) / (1.0F - GROW_START)));
+		float shrink = 1.0F - ease(progress / SHRINK_END);
+		Entity from = transition.from() == null ? player : transition.from();
+		if (shrink <= MIN_SCALE || from == (disguise == null ? player : disguise)) {
+			return List.of(state);
+		}
+		if (from != player) {
+			sync(player, from);
+		}
+		EntityRenderState old = extractor.apply(from);
+		old.nameTag = null;
+		old.scoreText = null;
+		scale(old, shrink);
+		return List.of(state, old);
+	}
+
+	/** Smoothstep, clamped: eases in and out of a change. */
+	private static float ease(float t) {
+		float x = Mth.clamp(t, 0.0F, 1.0F);
+		return x * x * (3.0F - 2.0F * x);
+	}
+
+	private static void scale(EntityRenderState state, float scale) {
+		float clamped = Math.max(scale, MIN_SCALE);
+		state.shadowRadius *= clamped;
+		if (state instanceof LivingEntityRenderState living) {
+			living.scale *= clamped;
+		}
 	}
 
 	/** Asks the server to morph into this look, or back to yourself for null. Goes through the commands, which check it. */
@@ -308,6 +434,16 @@ public class MorphClient implements ClientModInitializer {
 		}
 		if (living instanceof Mob mob) {
 			mob.setLeftHanded(player.getMainArm() == HumanoidArm.LEFT);
+		}
+		// Worn armour, with morph:show_armor on. Only mobs whose renderer has armour layers draw it.
+		boolean armor = MorphRules.clientRules(player.level()).showArmor();
+		for (EquipmentSlot slot : EquipmentSlot.VALUES) {
+			if (slot.getType() == EquipmentSlot.Type.HUMANOID_ARMOR) {
+				ItemStack worn = armor ? player.getItemBySlot(slot) : ItemStack.EMPTY;
+				if (!ItemStack.matches(worn, living.getItemBySlot(slot))) {
+					living.setItemSlot(slot, worn.copy());
+				}
+			}
 		}
 	}
 

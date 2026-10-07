@@ -4,12 +4,17 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.noelwilsson.morph.Morph;
 import com.noelwilsson.morph.MorphAbilities;
 import com.noelwilsson.morph.MorphPowers;
+import com.noelwilsson.morph.MorphProgress;
 import com.noelwilsson.morph.MorphRules;
+import com.noelwilsson.morph.MorphSounds;
 import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphVariant;
 import com.noelwilsson.morph.client.MorphClient;
 import com.noelwilsson.morph.client.MorphRadialScreen;
 import com.noelwilsson.morph.client.MorphSidebarScreen;
+import com.noelwilsson.morph.client.MorphUnlockToast;
+import com.noelwilsson.morph.mixin.EntityInvoker;
+import com.noelwilsson.morph.mixin.LivingEntityInvoker;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -20,7 +25,12 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContex
 import net.minecraft.advancements.AdvancementHolder;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.toasts.Toast;
 import net.minecraft.client.gui.navigation.ScreenPosition;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
+import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
+import net.minecraft.resources.Identifier;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.StringTag;
@@ -130,7 +140,10 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			search(ctx, world);
 			favorites(ctx, world);
 			toggle(ctx, world);
+			sounds(ctx, world);
+			disguise(ctx, world);
 			rules(ctx, world);
+			progress(ctx, world);
 			death(ctx, world);
 		}
 		Morph.LOGGER.info("MORPH-TEST PASS");
@@ -211,6 +224,11 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		ctx.runOnClient(mc -> check(MorphClient.disguise(mc.player) instanceof Zombie zombie && zombie.isBaby(), "client: disguise isn't a baby zombie"));
 		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-baby-zombie"));
 		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, ItemStack.EMPTY);
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, ItemStack.EMPTY);
+		});
 		command(world, "unmorph");
 		ctx.waitTicks(5);
 	}
@@ -236,6 +254,11 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		ctx.waitTicks(20);
 		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("warden-sonic-boom"));
 		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, ItemStack.EMPTY);
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, ItemStack.EMPTY);
+		});
 		command(world, "unmorph");
 		ctx.waitTicks(40);
 	}
@@ -469,6 +492,11 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		});
 		ctx.waitTicks(10);
 		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, ItemStack.EMPTY);
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, ItemStack.EMPTY);
+		});
 		world.getServer().runOnServer(server -> world.getConnection().getServerPlayer().setHealth(20.0F));
 		Morph.LOGGER.info("MORPH-TEST ok phantom {} -> {}", ground, highest);
 	}
@@ -720,6 +748,246 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		command(world, "unmorph");
 		ctx.waitTicks(2);
 		Morph.LOGGER.info("MORPH-TEST ok toggle");
+	}
+
+	/** A morphed player sounds like the mob: hurt, death, fall, steps and idle sounds, at the mob's volume and pitch. */
+	private static void sounds(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			MorphState.unlock(player, EntityTypes.ZOMBIE);
+			MorphState.unlock(player, EntityTypes.GHAST);
+			// The adult: an earlier test unlocked a baby zombie first, and /morph zombie picks the first look.
+			MorphState.morph(player, MorphVariant.of(EntityTypes.ZOMBIE));
+			LivingEntityInvoker voice = (LivingEntityInvoker) player;
+			check(voice.morph$getHurtSound(player.damageSources().generic()) == SoundEvents.ZOMBIE_HURT, "zombie morph: hurt sound isn't the zombie's");
+			check(voice.morph$getDeathSound() == SoundEvents.ZOMBIE_DEATH, "zombie morph: death sound isn't the zombie's");
+			check(player.getFallSounds().small() == SoundEvents.HOSTILE_SMALL_FALL, "zombie morph: fall sound " + player.getFallSounds());
+			float pitch = player.getVoicePitch();
+			check(pitch >= 0.8F && pitch <= 1.2F, "zombie morph: voice pitch " + pitch);
+			MorphState.morph(player, MorphVariant.parse(EntityTypes.ZOMBIE, babyTag(), player.level()));
+			check(player.getVoicePitch() > 1.25F, "baby zombie morph: voice pitch " + player.getVoicePitch() + ", want higher");
+			MorphState.morph(player, EntityTypes.GHAST);
+			check(voice.morph$getSoundVolume() == 5.0F, "ghast morph: volume " + voice.morph$getSoundVolume() + ", want 5");
+			MorphState.unmorph(player);
+			check(voice.morph$getHurtSound(player.damageSources().generic()) == SoundEvents.PLAYER_HURT, "unmorphed: hurt sound not the player's");
+			MorphState.morph(player, MorphVariant.of(EntityTypes.ZOMBIE));
+		});
+		ctx.waitTicks(2);
+		world.getConnection().waitForClientboundPackets();
+
+		// What the client actually plays, heard the way subtitles hear it.
+		Set<Identifier> heard = java.util.Collections.synchronizedSet(new HashSet<>());
+		ctx.runOnClient(mc -> mc.getSoundManager().addListener((sound, event, range) -> heard.add(sound.getIdentifier())));
+		ctx.runOnClient(mc -> ((EntityInvoker) mc.player).morph$playStepSound(mc.player.blockPosition().below(),
+			mc.level.getBlockState(mc.player.blockPosition().below())));
+		check(heard.contains(SoundEvents.ZOMBIE_STEP.location()), "zombie morph: client step sound isn't the zombie's: " + heard);
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			player.hurtServer(player.level(), player.damageSources().generic(), 1.0F);
+			// The idle sound is a dice roll that gets likelier every tick (Mob.baseTick); a thousand ticks always roll it.
+			for (int i = 0; i < 1100; i++) {
+				MorphSounds.tick(player);
+			}
+		});
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.waitTicks(2);
+		check(heard.contains(SoundEvents.ZOMBIE_HURT.location()), "zombie morph: client didn't play the zombie's hurt sound: " + heard);
+		check(heard.contains(SoundEvents.ZOMBIE_AMBIENT.location()), "zombie morph: no idle groan: " + heard);
+		check(!heard.contains(SoundEvents.PLAYER_HURT.location()), "zombie morph: client still played the player's hurt sound");
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			player.setHealth(player.getMaxHealth());
+			MorphState.unmorph(player);
+		});
+		ctx.waitTicks(2);
+		Morph.LOGGER.info("MORPH-TEST ok sounds");
+	}
+
+	/**
+	 * A disguise: no nametag unless morph:show_nametags is on, the player's armour on humanoid mobs unless
+	 * morph:show_armor is off, and a shrink-and-grow when changing body.
+	 */
+	private static void disguise(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		// Look at the player from a pig, as another player would see them; extract them the way the world does.
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			// Armour for the zombie to wear. The helmet also keeps it from burning in the sun, out of the screenshots.
+			player.clearFire();
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, new ItemStack(Items.DIAMOND_HELMET));
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, new ItemStack(Items.GOLDEN_CHESTPLATE));
+			Mob pig = EntityTypes.PIG.create(player.level(), EntitySpawnReason.COMMAND);
+			pig.setPos(player.getX() + 3, player.getY(), player.getZ());
+			pig.setNoAi(true);
+			pig.addTag("morph_camera");
+			player.level().addFreshEntity(pig);
+		});
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> {
+			Entity pig = null;
+			for (Entity entity : mc.level.entitiesForRendering()) {
+				if (entity.getType() == EntityTypes.PIG && entity.distanceTo(mc.player) < 4) {
+					pig = entity;
+				}
+			}
+			check(pig != null, "camera pig not on the client");
+			mc.setCameraEntity(pig);
+		});
+		ctx.waitTicks(2);
+		check(ctx.computeOnClient(mc -> nameTag(mc) != null), "unmorphed player has no nametag (test can't see names)");
+		world.getServer().runOnServer(server -> MorphState.morph(world.getConnection().getServerPlayer(), MorphVariant.of(EntityTypes.ZOMBIE)));
+		ctx.waitTicks(25);
+		world.getConnection().waitForClientboundPackets();
+		check(ctx.computeOnClient(mc -> nameTag(mc)) == null, "show_nametags off: morphed player still has a nametag");
+		world.getServer().runCommand("gamerule morph:show_nametags true");
+		ctx.waitTicks(2);
+		world.getConnection().waitForClientboundPackets();
+		check(ctx.computeOnClient(mc -> MorphRules.clientRules(mc.level).showNametags()), "show_nametags didn't reach the client");
+		String name = ctx.computeOnClient(mc -> {
+			net.minecraft.network.chat.Component tag = nameTag(mc);
+			return tag == null ? null : tag.getString();
+		});
+		check(name != null && name.equals(ctx.computeOnClient(mc -> mc.player.getName().getString())),
+			"show_nametags on: morphed player's nametag is " + name);
+		world.getServer().runCommand("gamerule morph:show_nametags false");
+		ctx.runOnClient(mc -> {
+			mc.setCameraEntity(mc.player);
+			mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
+		});
+		world.getServer().runCommand("kill @e[tag=morph_camera]");
+
+		// Worn armour on a zombie.
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> {
+			LivingEntity zombie = (LivingEntity) MorphClient.disguise(mc.player);
+			check(zombie.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD).is(Items.DIAMOND_HELMET), "zombie morph: no helmet on the disguise");
+			check(zombie.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).is(Items.GOLDEN_CHESTPLATE), "zombie morph: no chestplate on the disguise");
+		});
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-zombie-armor"));
+		world.getServer().runCommand("gamerule morph:show_armor false");
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		check(ctx.computeOnClient(mc -> ((LivingEntity) MorphClient.disguise(mc.player)).getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD)
+			.isEmpty()), "show_armor off: disguise still wears the helmet");
+		world.getServer().runCommand("gamerule morph:show_armor true");
+
+		// Changing body: both bodies drawn, the old one shrinking, then just the new one.
+		command(world, "morph spider");
+		ctx.waitTicks(1);
+		world.getConnection().waitForClientboundPackets();
+		ctx.waitTicks(4);
+		ctx.runOnClient(mc -> {
+			float progress = MorphClient.transition(mc.player, 0.0F);
+			check(progress >= 0.0F && progress < 1.0F, "zombie to spider: no transition (" + progress + ")");
+			List<EntityRenderState> states = MorphClient.extract(mc.player, 0.0F, e -> mc.getEntityRenderDispatcher().extractEntity(e, 0.0F));
+			check(states.size() == 2, "zombie to spider: drew " + states.size() + " bodies mid-change, want 2");
+			check(states.get(0).entityType == EntityTypes.SPIDER && states.get(1).entityType == EntityTypes.ZOMBIE,
+				"zombie to spider: drew " + states.get(0).entityType + " and " + states.get(1).entityType);
+			float spider = ((LivingEntityRenderState) states.get(0)).scale;
+			float zombie = ((LivingEntityRenderState) states.get(1)).scale;
+			check(spider < 1.0F && zombie < 1.0F, "zombie to spider: scales " + spider + ", " + zombie + " mid-change");
+		});
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-transition"));
+		ctx.waitTicks(MorphClient.TRANSITION_TICKS + 5);
+		ctx.runOnClient(mc -> {
+			check(MorphClient.transition(mc.player, 0.0F) < 0.0F, "zombie to spider: transition never ended");
+			List<EntityRenderState> states = MorphClient.extract(mc.player, 0.0F, e -> mc.getEntityRenderDispatcher().extractEntity(e, 0.0F));
+			check(states.size() == 1 && ((LivingEntityRenderState) states.get(0)).scale == 1.0F, "spider: not back to one full-size body");
+		});
+		command(world, "unmorph");
+		ctx.waitTicks(3);
+		world.getConnection().waitForClientboundPackets();
+		check(ctx.computeOnClient(mc -> MorphClient.transition(mc.player, 0.0F) >= 0.0F), "spider to player: no transition");
+		ctx.waitTicks(MorphClient.TRANSITION_TICKS + 5);
+		ctx.runOnClient(mc -> mc.options.setCameraType(CameraType.FIRST_PERSON));
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, ItemStack.EMPTY);
+			player.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, ItemStack.EMPTY);
+		});
+		Morph.LOGGER.info("MORPH-TEST ok disguise");
+	}
+
+	/** The nametag drawn over the local player, as seen from the camera entity. */
+	private static net.minecraft.network.chat.@org.jspecify.annotations.Nullable Component nameTag(Minecraft mc) {
+		return MorphClient.extract(mc.player, 0.0F, e -> mc.getEntityRenderDispatcher().extractEntity(e, 0.0F)).getFirst().nameTag;
+	}
+
+	private static net.minecraft.nbt.CompoundTag babyTag() {
+		net.minecraft.nbt.CompoundTag tag = new net.minecraft.nbt.CompoundTag();
+		tag.putBoolean("IsBaby", true);
+		return tag;
+	}
+
+	/** A kill shows a toast instead of a chat line; milestones award the Morphed advancements. */
+	private static void progress(ClientGameTestContext ctx, TestSingleplayerContext world) {
+		check(!world.getServer().computeOnServer(s -> MorphState.isUnlocked(world.getConnection().getServerPlayer(), EntityTypes.MOOSHROOM)),
+			"mooshroom already unlocked");
+		ctx.runOnClient(mc -> mc.gui.toastManager().clear());
+		kill(world, EntityTypes.MOOSHROOM);
+		ctx.waitTicks(2);
+		world.getConnection().waitForClientboundPackets();
+		ctx.waitTicks(2);
+		MorphUnlockToast toast = ctx.computeOnClient(mc -> mc.gui.toastManager().getToast(MorphUnlockToast.class, Toast.NO_TOKEN));
+		check(toast != null && toast.variant().type() == EntityTypes.MOOSHROOM, "killing a mooshroom didn't show its unlock toast");
+		// Toasts slide in on the wall clock, and test ticks run faster than that.
+		realTime(ctx, 1500);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-unlock-toast"));
+
+		Set<EntityType<?>> collectable = MorphProgress.collectable();
+		Morph.LOGGER.info("MORPH-TEST {} collectable mobs", collectable.size());
+		check(collectable.contains(EntityTypes.ZOMBIE) && collectable.contains(EntityTypes.WARDEN), "zombie or warden not collectable");
+		check(!collectable.contains(EntityTypes.GIANT) && !collectable.contains(EntityTypes.ILLUSIONER), "giant or illusioner counted");
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			check(done(server, player, "root"), "first unlock didn't award morph:root");
+			int collected = MorphProgress.collected(player, collectable);
+			check(collected < 10 || done(server, player, "ten_morphs"), collected + " mobs but no morph:ten_morphs");
+			check(!done(server, player, "all_morphs"), "morph:all_morphs with " + collected + " mobs");
+			List<EntityType<?>> missing = collectable.stream().filter(type -> !MorphState.isUnlocked(player, type)).toList();
+			for (EntityType<?> type : missing.subList(0, missing.size() - 1)) {
+				MorphState.unlock(player, type);
+			}
+			check(done(server, player, "fifty_morphs"), "no morph:fifty_morphs with all but one mob");
+			check(!done(server, player, "all_morphs"), "morph:all_morphs with one mob still missing");
+			MorphState.unlock(player, missing.getLast());
+			check(done(server, player, "all_morphs"), "no morph:all_morphs with every mob");
+		});
+		ctx.waitTicks(5);
+		world.getConnection().waitForClientboundPackets();
+		ctx.runOnClient(mc -> mc.gui.toastManager().clear());
+		ctx.setScreen(MorphSidebarScreen::new);
+		ctx.waitTicks(5);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-sidebar-progress"));
+		// The Morphed tab, selected.
+		ctx.setScreen(() -> {
+			Minecraft mc = Minecraft.getInstance();
+			net.minecraft.client.multiplayer.ClientAdvancements advancements = mc.player.connection.getAdvancements();
+			net.minecraft.client.gui.screens.advancements.AdvancementsScreen screen =
+				new net.minecraft.client.gui.screens.advancements.AdvancementsScreen(advancements);
+			advancements.setSelectedTab(advancements.get(Morph.id("root")), true);
+			return screen;
+		});
+		ctx.waitTicks(5);
+		Morph.LOGGER.info("MORPH-TEST screenshot {}", ctx.takeScreenshot("morph-advancements"));
+		ctx.setScreen(() -> null);
+		Morph.LOGGER.info("MORPH-TEST ok progress");
+	}
+
+	private static void realTime(ClientGameTestContext ctx, long millis) {
+		try {
+			Thread.sleep(millis);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
+		ctx.waitTicks(1);
+	}
+
+	private static boolean done(net.minecraft.server.MinecraftServer server, ServerPlayer player, String advancement) {
+		AdvancementHolder holder = server.getAdvancements().get(Morph.id(advancement));
+		return holder != null && player.getAdvancements().getOrStartProgress(holder).isDone();
 	}
 
 	/** The morph: gamerules: kills to unlock, morph on unlock, flight, monster behaviour. */

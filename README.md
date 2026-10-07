@@ -4,8 +4,11 @@ A Fabric mod for Minecraft 26.3. Kill a mob to unlock it, then morph into it. Yo
 
 ## Features
 
-- **Unlock by killing.** Every mob you kill becomes a morph. Variants count separately, so a red sheep, a baby zombie or a charged creeper each get their own entry.
-- **Take the mob's body.** Your hitbox, max health and model all change to the mob's. Other players see the mob too, holding whatever you hold, with its walk, attack and idle animations.
+- **Unlock by killing.** Every mob you kill becomes a morph, announced with a toast showing the mob. Variants count separately, so a red sheep, a baby zombie or a charged creeper each get their own entry.
+- **Collect them all.** The sidebar counts the mobs you've collected out of every mob with a spawn egg, and a Morphed advancement tab marks 10, 50 and all of them.
+- **Take the mob's body.** Your hitbox, max health and model all change to the mob's. Other players see the mob too, holding whatever you hold and wearing your armour if it has armour slots, with its walk, attack and idle animations. Your old body shrinks away in a puff of smoke as the new one grows in.
+- **Sound like the mob.** Your hurt, death, fall and step sounds are the mob's, and now and then you make its idle sound (not while sneaking). A baby zombie squeaks higher, and a ghast is heard from far away.
+- **Pass for a real mob.** No name floats over a morphed player, unless the server turns `morph:show_nametags` on.
 - **Abilities.** Parrots, bats, bees, ghasts and blazes can fly. Phantoms glide like they have an elytra and flap to gain height. Spiders climb walls. Fish and squid breathe and swim fast underwater. Striders walk on lava. Rabbits and horses run fast and jump high. Nether mobs are fire immune.
 - **Powers.** Many mobs come with an active power on a cooldown. Blazes shoot fireballs, endermen teleport, creepers explode (you survive it), wardens use a sonic boom, skeletons shoot arrows, evokers summon fangs, goats ram, foxes pounce, sniffers dig up seeds, and dozens more.
 - **Weaknesses.** Zombies and skeletons burn in daylight. Fish dry out on land. Water hurts blazes and endermen. Healing potions hurt you as an undead mob.
@@ -47,6 +50,8 @@ Set these with `/gamerule`, or under *More World Options → Game Rules* when cr
 | `morph:morph_on_unlock` | `false` | Turn into a mob as soon as you unlock it. |
 | `morph:allow_flight` | `true` | When `false`, flying mobs (parrots, blazes, ghasts...) get slow falling instead of flight. |
 | `morph:flight_needs_advancement` | `false` | When `true`, flying mobs only flutter down until you've been to the End. See [Earning flight](#earning-flight). |
+| `morph:show_nametags` | `false` | Show a morphed player's name over the mob. Off, they pass for a real mob. |
+| `morph:show_armor` | `true` | Mobs with armour slots (zombies, skeletons, piglins...) wear the player's armour. |
 | `morph:monster_behavior` | `DISGUISE` | `DISGUISE`: monsters treat you like the mob you look like. `MONSTERS_ONLY`: monsters leave you alone only while you're a monster. `SHORT_RANGE`: monsters `DISGUISE` would fool still attack, but only notice you from half as far. `OFF`: morphing doesn't change how mobs treat you. |
 
 ## Datapack tags

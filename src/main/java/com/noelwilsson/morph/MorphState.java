@@ -188,6 +188,7 @@ public final class MorphState {
 		if (type != null) {
 			clearKills(player, type);
 		}
+		MorphProgress.update(player);
 		return true;
 	}
 

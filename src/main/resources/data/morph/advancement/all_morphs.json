@@ -1,0 +1,25 @@
+{
+	"parent": "morph:fifty_morphs",
+	"criteria": {
+		"unlocked": {
+			"trigger": "minecraft:impossible"
+		}
+	},
+	"display": {
+		"icon": {
+			"id": "minecraft:dragon_head"
+		},
+		"title": {
+			"translate": "advancements.morph.all_morphs.title"
+		},
+		"description": {
+			"translate": "advancements.morph.all_morphs.description"
+		},
+		"frame": "challenge",
+		"show_toast": true,
+		"announce_to_chat": true
+	},
+	"rewards": {
+		"experience": 100
+	}
+}

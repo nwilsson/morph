@@ -1,0 +1,21 @@
+{
+	"criteria": {
+		"unlocked": {
+			"trigger": "minecraft:impossible"
+		}
+	},
+	"display": {
+		"icon": {
+			"id": "minecraft:carved_pumpkin"
+		},
+		"title": {
+			"translate": "advancements.morph.root.title"
+		},
+		"description": {
+			"translate": "advancements.morph.root.description"
+		},
+		"background": "minecraft:block/mossy_cobblestone",
+		"show_toast": false,
+		"announce_to_chat": false
+	}
+}
