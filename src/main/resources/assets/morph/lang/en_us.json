@@ -13,9 +13,12 @@
 	"gamerule.morph.morph_on_unlock.description": "Turn into a mob as soon as you unlock it.",
 	"gamerule.morph.allow_flight": "Morphs can fly",
 	"gamerule.morph.allow_flight.description": "When off, flying mobs like parrots and blazes only flutter down slowly.",
+	"gamerule.morph.flight_needs_advancement": "Flying must be earned",
+	"gamerule.morph.flight_needs_advancement.description": "When on, flying mobs only flutter down until you've been to the End. Datapacks can change this by replacing the morph:flight advancement.",
 	"gamerule.morph.monster_behavior": "How monsters treat morphs",
-	"gamerule.morph.monster_behavior.description": "Disguise: like the mob you look like. Monsters only: only monster bodies are safe. Off: morphing changes nothing.",
+	"gamerule.morph.monster_behavior.description": "Disguise: like the mob you look like. Monsters only: only monster bodies are safe. Short range: the disguise only works from afar. Off: morphing changes nothing.",
 	"gamerule.morph.monster_behavior.disguise": "Disguise",
 	"gamerule.morph.monster_behavior.monsters_only": "Monsters only",
+	"gamerule.morph.monster_behavior.short_range": "Short range",
 	"gamerule.morph.monster_behavior.off": "Off"
 }

@@ -17,6 +17,7 @@ import java.util.function.Predicate;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
+import net.minecraft.advancements.AdvancementHolder;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.navigation.ScreenPosition;
@@ -758,6 +759,27 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		check(world.getServer().computeOnServer(s -> world.getConnection().getServerPlayer().getAbilities().mayfly),
 			"parrot can't fly after allow_flight went back on");
 
+		// flight_needs_advancement: no flying until morph:flight, which follows vanilla's "The End?".
+		world.getServer().runCommand("gamerule morph:flight_needs_advancement true");
+		ctx.waitTicks(25);
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			check(!player.getAbilities().mayfly, "parrot can fly before earning flight");
+			check(player.hasEffect(MobEffects.SLOW_FALLING), "parrot doesn't flutter before earning flight");
+		});
+		world.getServer().runCommand("advancement grant @a only minecraft:end/root");
+		ctx.waitTicks(25);
+		world.getServer().runOnServer(server -> {
+			ServerPlayer player = world.getConnection().getServerPlayer();
+			AdvancementHolder flight = server.getAdvancements().get(MorphRules.FLIGHT_ADVANCEMENT);
+			check(flight != null && player.getAdvancements().getOrStartProgress(flight).isDone(),
+				"entering the End didn't grant morph:flight");
+			check(player.getAbilities().mayfly, "parrot can't fly after earning flight");
+		});
+		world.getServer().runCommand("advancement revoke @a only morph:flight");
+		world.getServer().runCommand("advancement revoke @a only minecraft:end/root");
+		world.getServer().runCommand("gamerule morph:flight_needs_advancement false");
+
 		world.getServer().runOnServer(server -> {
 			ServerPlayer player = world.getConnection().getServerPlayer();
 			ServerLevel level = player.level();
@@ -770,8 +792,16 @@ public class MorphClientGameTest implements FabricClientGameTest {
 			check(zombie.canAttack(player), "monsters_only: zombie ignores a cow");
 			MorphState.morph(player, EntityTypes.ZOMBIE);
 			check(!zombie.canAttack(player), "monsters_only: zombie attacks a zombie");
+			check(player.getVisibilityPercent(level, zombie) == 1.0, "monsters_only: zombie sees a zombie from less far");
+			server.getGameRules().set(MorphRules.MONSTER_BEHAVIOR, MorphRules.MonsterBehavior.SHORT_RANGE, server);
+			check(zombie.canAttack(player), "short_range: zombie ignores a zombie");
+			check(player.getVisibilityPercent(level, zombie) == 0.5, "short_range: zombie sees a zombie from as far as ever");
+			MorphState.morph(player, EntityTypes.VILLAGER);
+			check(player.getVisibilityPercent(level, zombie) == 1.0, "short_range: zombie sees a villager from less far");
+			MorphState.morph(player, EntityTypes.ZOMBIE);
 			server.getGameRules().set(MorphRules.MONSTER_BEHAVIOR, MorphRules.MonsterBehavior.OFF, server);
 			check(zombie.canAttack(player), "off: zombie ignores a zombie");
+			check(player.getVisibilityPercent(level, zombie) == 1.0, "off: zombie sees a zombie from less far");
 			server.getGameRules().set(MorphRules.MONSTER_BEHAVIOR, MorphRules.MonsterBehavior.DISGUISE, server);
 			zombie.discard();
 			MorphState.unmorph(player);

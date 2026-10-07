@@ -46,7 +46,8 @@ Set these with `/gamerule`, or under *More World Options → Game Rules* when cr
 | `morph:keep_morphs_on_death` | `true` | When `false`, dying forgets every unlocked morph, starred morph and kill count. |
 | `morph:morph_on_unlock` | `false` | Turn into a mob as soon as you unlock it. |
 | `morph:allow_flight` | `true` | When `false`, flying mobs (parrots, blazes, ghasts...) get slow falling instead of flight. |
-| `morph:monster_behavior` | `DISGUISE` | `DISGUISE`: monsters treat you like the mob you look like. `MONSTERS_ONLY`: monsters leave you alone only while you're a monster. `OFF`: morphing doesn't change how mobs treat you. |
+| `morph:flight_needs_advancement` | `false` | When `true`, flying mobs only flutter down until you've been to the End. See [Earning flight](#earning-flight). |
+| `morph:monster_behavior` | `DISGUISE` | `DISGUISE`: monsters treat you like the mob you look like. `MONSTERS_ONLY`: monsters leave you alone only while you're a monster. `SHORT_RANGE`: monsters `DISGUISE` would fool still attack, but only notice you from half as far. `OFF`: morphing doesn't change how mobs treat you. |
 
 ## Datapack tags
 
@@ -65,6 +66,33 @@ For example, `data/morph/tags/entity_type/blocked.json`:
 	"values": ["minecraft:wither", "minecraft:ender_dragon"]
 }
 ```
+
+## Earning flight
+
+With `morph:flight_needs_advancement` on, flying morphs only fly once the player has the hidden `morph:flight` advancement. By default it's granted to anyone who has the vanilla *The End?* advancement, including players who reached the End before the rule was turned on. A datapack can replace `data/morph/advancement/flight.json` to require something else, for example killing the dragon:
+
+```json
+{
+	"criteria": {
+		"killed_dragon": {
+			"trigger": "minecraft:tick",
+			"conditions": {
+				"player": {
+					"type": "minecraft:entity_properties",
+					"entity": "this",
+					"predicate": {
+						"minecraft:type_specific/player": {
+							"advancements": {"minecraft:end/kill_dragon": true}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+```
+
+`/advancement grant <player> only morph:flight` lets one player fly straight away.
 
 ## Installation
 

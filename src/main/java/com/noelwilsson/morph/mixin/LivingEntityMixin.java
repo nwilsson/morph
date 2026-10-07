@@ -4,9 +4,11 @@ import com.noelwilsson.morph.MorphAbilities;
 import com.noelwilsson.morph.MorphRelations;
 import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphTemplates;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
@@ -160,6 +162,15 @@ abstract class LivingEntityMixin {
 	private void morph$monstersIgnore(LivingEntity target, CallbackInfoReturnable<Boolean> cir) {
 		if (MorphRelations.monsterIgnores((LivingEntity) (Object) this, target)) {
 			cir.setReturnValue(false);
+		}
+	}
+
+	/** monster_behavior SHORT_RANGE: monsters the disguise would fool notice the player from closer (TargetingConditions). */
+	@Inject(method = "getVisibilityPercent", at = @At("RETURN"), cancellable = true)
+	private void morph$seenUpClose(ServerLevel level, @Nullable Entity targetingEntity, CallbackInfoReturnable<Double> cir) {
+		double visibility = MorphRelations.visibility((LivingEntity) (Object) this, targetingEntity);
+		if (visibility < 1.0) {
+			cir.setReturnValue(cir.getReturnValue() * visibility);
 		}
 	}
 }

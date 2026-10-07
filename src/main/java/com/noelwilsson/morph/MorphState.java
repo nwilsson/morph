@@ -221,6 +221,11 @@ public final class MorphState {
 		player.refreshDimensions();
 		apply(player);
 		setHealthFraction(player, fraction, before);
+		EntityType<?> type = variant.type();
+		if (type != null && MorphAbilities.of(type).contains(MorphAbilities.Ability.FLY) && !MorphRules.mayFly(player)
+			&& MorphRules.allowFlight(player.level())) {
+			player.sendOverlayMessage(Component.literal("You can't fly yet. By default, flying unlocks once you've been to the End."));
+		}
 	}
 
 	public static void unmorph(ServerPlayer player) {
@@ -289,8 +294,9 @@ public final class MorphState {
 		if (abilities.contains(MorphAbilities.Ability.JUMP)) {
 			setModifier(player, Attributes.JUMP_STRENGTH, JUMP_MODIFIER, 0.2, AttributeModifier.Operation.ADD_VALUE);
 		}
-		// With morph:allow_flight off, fliers flutter down instead. The rule can change while someone is in the air.
-		if (abilities.contains(MorphAbilities.Ability.FLY) && !MorphRules.allowFlight(player.level())) {
+		// Fliers that may not fly (morph:allow_flight off, or morph:flight not earned yet) flutter down instead. The
+		// rules can change while someone is in the air, and the advancement can be earned mid-morph.
+		if (abilities.contains(MorphAbilities.Ability.FLY) && !MorphRules.mayFly(player)) {
 			abilities.remove(MorphAbilities.Ability.FLY);
 			abilities.add(MorphAbilities.Ability.SLOW_FALL);
 			if (player.getAbilities().mayfly && !player.isCreative() && !player.isSpectator()) {

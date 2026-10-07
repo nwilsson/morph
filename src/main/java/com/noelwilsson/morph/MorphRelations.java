@@ -13,9 +13,13 @@ import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
+import org.jspecify.annotations.Nullable;
 
 /** How other mobs see a morphed player. */
 public final class MorphRelations {
+	/** How far, as a fraction of its usual range, a monster notices a disguised player with monster_behavior SHORT_RANGE. */
+	private static final double SHORT_RANGE_VISIBILITY = 0.5;
+
 	private MorphRelations() {}
 
 	/** The player is morphed into a monster (anything vanilla marks as Enemy: zombie, blaze, enderman, ...). */
@@ -35,23 +39,39 @@ public final class MorphRelations {
 	/**
 	 * Monsters treat a morphed player like the mob they look like: a zombie leaves a cow or another zombie alone but
 	 * still goes after a villager or iron golem. Whoever hits a monster gets fought back, whatever they look like.
-	 * With monster_behavior MONSTERS_ONLY, any monster body is left alone and any other is hunted; OFF changes nothing.
+	 * With monster_behavior MONSTERS_ONLY, any monster body is left alone and any other is hunted; SHORT_RANGE and OFF
+	 * never make a monster leave you alone.
 	 */
 	public static boolean monsterIgnores(LivingEntity attacker, LivingEntity target) {
-		if (!(attacker instanceof Enemy) || !(target instanceof Player player) || attacker.getLastHurtByMob() == target) {
+		return switch (behavior(attacker)) {
+			case DISGUISE -> fooled(attacker, target);
+			case MONSTERS_ONLY -> disguiseApplies(attacker, target) && looksLikeMonster(target);
+			case SHORT_RANGE, OFF -> false;
+		};
+	}
+
+	/**
+	 * With monster_behavior SHORT_RANGE, a monster the disguise would fool notices the player from this fraction of its
+	 * usual range (like a player wearing its head), then attacks as usual. 1 otherwise.
+	 */
+	public static double visibility(LivingEntity target, @Nullable Entity looker) {
+		return looker instanceof LivingEntity attacker && behavior(attacker) == MorphRules.MonsterBehavior.SHORT_RANGE
+			&& fooled(attacker, target) ? SHORT_RANGE_VISIBILITY : 1.0;
+	}
+
+	/** A monster sizing up a player it has no grudge against: the only case where looking like a mob can matter. */
+	private static boolean disguiseApplies(LivingEntity attacker, LivingEntity target) {
+		return attacker instanceof Enemy && target instanceof Player && attacker.getLastHurtByMob() != target
+			// Fleeing goes through canAttack too: a creeper that "can't attack" a cat can't see it to run from it.
+			&& !(attacker instanceof Creeper && scaresCreepers(target));
+	}
+
+	/** The DISGUISE rule: the monster doesn't hunt the mob the player looks like. */
+	private static boolean fooled(LivingEntity attacker, LivingEntity target) {
+		if (!disguiseApplies(attacker, target)) {
 			return false;
 		}
-		MorphRules.MonsterBehavior behavior = behavior(attacker);
-		if (behavior == MorphRules.MonsterBehavior.OFF) {
-			return false;
-		}
-		// Fleeing goes through canAttack too: a creeper that "can't attack" a cat can't see it to run from it.
-		if (attacker instanceof Creeper && scaresCreepers(player)) {
-			return false;
-		}
-		if (behavior == MorphRules.MonsterBehavior.MONSTERS_ONLY) {
-			return looksLikeMonster(player);
-		}
+		Player player = (Player) target;
 		EntityType<?> type = MorphState.current(player);
 		LivingEntity body = type == null ? null : MorphTemplates.get(type, player.level());
 		return body != null && !hunts(attacker, body);
