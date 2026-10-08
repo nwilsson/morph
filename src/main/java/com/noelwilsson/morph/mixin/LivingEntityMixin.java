@@ -7,6 +7,7 @@ import com.noelwilsson.morph.MorphState;
 import com.noelwilsson.morph.MorphTemplates;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Entity;
@@ -112,6 +113,31 @@ abstract class LivingEntityMixin {
 			LivingEntity template = MorphTemplates.get(type, ((LivingEntity) (Object) this).level());
 			if (template != null) {
 				cir.setReturnValue(template.isInvertedHealAndHarm());
+			}
+		}
+	}
+
+	/**
+	 * Effects the mob shrugs off, the player does too: spiders ignore poison, wither skeletons wither, undead mobs
+	 * poison and regeneration. Asked of the mob's own code, so modded mobs' immunities carry over.
+	 */
+	@Inject(method = "canBeAffected", at = @At("HEAD"), cancellable = true)
+	private void morph$immuneToEffects(MobEffectInstance effect, CallbackInfoReturnable<Boolean> cir) {
+		if ((Object) this instanceof Player player) {
+			LivingEntity body = MorphTemplates.body(player);
+			if (body != null && !body.canBeAffected(effect)) {
+				cir.setReturnValue(false);
+			}
+		}
+	}
+
+	/** Strays, polar bears and snow golems don't freeze in powder snow. Frost-proof armour still works for everyone. */
+	@Inject(method = "canFreeze", at = @At("HEAD"), cancellable = true)
+	private void morph$freezeImmune(CallbackInfoReturnable<Boolean> cir) {
+		if ((Object) this instanceof Player player) {
+			LivingEntity body = MorphTemplates.body(player);
+			if (body != null && !body.canFreeze()) {
+				cir.setReturnValue(false);
 			}
 		}
 	}

@@ -8,7 +8,8 @@
 		"fabric-client-gametest": [
 			"com.noelwilsson.morph.test.MorphClientGameTest",
 			"com.noelwilsson.morph.test.MorphPowersGameTest",
-			"com.noelwilsson.morph.test.MorphDataGameTest"
+			"com.noelwilsson.morph.test.MorphDataGameTest",
+			"com.noelwilsson.morph.test.MorphBodyGameTest"
 		]
 	},
 	"depends": {

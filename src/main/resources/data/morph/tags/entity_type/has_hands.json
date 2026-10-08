@@ -1,0 +1,29 @@
+{
+	"values": [
+		"minecraft:allay",
+		"minecraft:bogged",
+		"minecraft:copper_golem",
+		"minecraft:drowned",
+		"minecraft:enderman",
+		"minecraft:evoker",
+		"minecraft:giant",
+		"minecraft:husk",
+		"minecraft:illusioner",
+		"minecraft:iron_golem",
+		"minecraft:parched",
+		"minecraft:piglin",
+		"minecraft:piglin_brute",
+		"minecraft:pillager",
+		"minecraft:skeleton",
+		"minecraft:stray",
+		"minecraft:vex",
+		"minecraft:villager",
+		"minecraft:vindicator",
+		"minecraft:wandering_trader",
+		"minecraft:witch",
+		"minecraft:wither_skeleton",
+		"minecraft:zombie",
+		"minecraft:zombie_villager",
+		"minecraft:zombified_piglin"
+	]
+}

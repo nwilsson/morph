@@ -3,6 +3,8 @@ package com.noelwilsson.morph.client.mixin;
 import com.noelwilsson.morph.client.MorphClient;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.extract.LevelExtractor;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.world.entity.Entity;
@@ -11,12 +13,15 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * When the world's entity list is extracted, a morphed player is drawn as their disguise. Only this call is
  * swapped: the local player's own state (first-person hands, overlays) must stay an AvatarRenderState. While a player
- * changes body, their old body is drawn too, added to the list right after the new one.
+ * changes body, their old body is drawn too, added to the list right after the new one. A ridden player doesn't draw
+ * their own riders in first person.
  */
 @Mixin(LevelExtractor.class)
 abstract class LevelExtractorMixin {
@@ -47,5 +52,19 @@ abstract class LevelExtractorMixin {
 		states.addAll(morph$extra);
 		morph$extra.clear();
 		return true;
+	}
+
+	/**
+	 * A player ridden as a horse looks out from the horse's eyes, which is where the rider sits. In first person their
+	 * riders aren't drawn, as their own body isn't; in third person they are.
+	 */
+	@Inject(method = "isEntityVisible", at = @At("HEAD"), cancellable = true)
+	private void morph$hideOwnRiders(Entity entity, Frustum frustum, double camX, double camY, double camZ, float partialTicks,
+		long chunkFadeDuration, CallbackInfoReturnable<Boolean> cir) {
+		Minecraft minecraft = Minecraft.getInstance();
+		Entity camera = minecraft.getCameraEntity();
+		if (camera instanceof Player && camera.hasIndirectPassenger(entity) && minecraft.options.getCameraType().isFirstPerson()) {
+			cir.setReturnValue(false);
+		}
 	}
 }

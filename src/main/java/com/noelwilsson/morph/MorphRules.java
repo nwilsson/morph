@@ -21,8 +21,9 @@ import net.minecraft.world.level.gamerules.GameRule;
 import net.minecraft.world.level.gamerules.GameRuleCategory;
 
 /**
- * What a server can change: gamerules (/gamerule morph:...) and two entity type tags a datapack can fill in. Mobs in
- * #morph:blocked can't be unlocked or morphed into; mobs in #morph:powerless keep their body but lose their power.
+ * What a server can change: gamerules (/gamerule morph:...) and entity type tags a datapack can fill in. Mobs in
+ * #morph:blocked can't be unlocked or morphed into; mobs in #morph:powerless keep their body but lose their power;
+ * #morph:has_hands says which bodies can use items under morph:body_limits.
  * A datapack can also replace the morph:flight advancement to change what earns flight. Rules that change how a
  * disguise is drawn are copied to every client (see CLIENT_RULES).
  */
@@ -50,23 +51,29 @@ public final class MorphRules {
 	/** On: humanoid morphs (zombies, skeletons, piglins) wear the player's armour. Off keeps disguises plain. */
 	public static final GameRule<Boolean> SHOW_ARMOR = GameRuleBuilder.forBoolean(true).category(CATEGORY)
 		.buildAndRegister(Morph.id("show_armor"));
+	/** On: bodies limit what you can do. Mobs without hands only eat and drink, and meat- and plant-eaters keep their diet. */
+	public static final GameRule<Boolean> BODY_LIMITS = GameRuleBuilder.forBoolean(false).category(CATEGORY)
+		.buildAndRegister(Morph.id("body_limits"));
 	public static final GameRule<MonsterBehavior> MONSTER_BEHAVIOR = GameRuleBuilder.forEnum(MonsterBehavior.DISGUISE).category(CATEGORY)
 		.buildAndRegister(Morph.id("monster_behavior"));
 
 	public static final TagKey<EntityType<?>> BLOCKED = TagKey.create(Registries.ENTITY_TYPE, Morph.id("blocked"));
 	public static final TagKey<EntityType<?>> POWERLESS = TagKey.create(Registries.ENTITY_TYPE, Morph.id("powerless"));
+	/** Mobs that can hold and use things, for morph:body_limits. */
+	public static final TagKey<EntityType<?>> HAS_HANDS = TagKey.create(Registries.ENTITY_TYPE, Morph.id("has_hands"));
 	/** Hidden advancement that earns flight while morph:flight_needs_advancement is on. */
 	public static final Identifier FLIGHT_ADVANCEMENT = Morph.id("flight");
 
-	/** The rules clients need to draw disguises. Gamerules stay on the server, so these ride along as a global attachment. */
-	public record ClientRules(boolean showNametags, boolean showArmor) {
-		public static final ClientRules DEFAULT = new ClientRules(false, true);
+	/** The rules clients need to draw disguises and predict what a body may do. Gamerules stay on the server, so these ride along as a global attachment. */
+	public record ClientRules(boolean showNametags, boolean showArmor, boolean bodyLimits) {
+		public static final ClientRules DEFAULT = new ClientRules(false, true, false);
 	}
 
 	public static final AttachmentType<ClientRules> CLIENT_RULES = AttachmentRegistry.<ClientRules>builder()
 		.syncWith(StreamCodec.composite(
 			ByteBufCodecs.BOOL, ClientRules::showNametags,
 			ByteBufCodecs.BOOL, ClientRules::showArmor,
+			ByteBufCodecs.BOOL, ClientRules::bodyLimits,
 			ClientRules::new), AttachmentSyncPredicate.all())
 		.buildAndRegister(Morph.id("client_rules"));
 
@@ -88,12 +95,13 @@ public final class MorphRules {
 		ServerLifecycleEvents.SERVER_STARTED.register(MorphRules::syncClientRules);
 		GameRuleEvents.changeCallback(SHOW_NAMETAGS).register((value, server) -> syncClientRules(server));
 		GameRuleEvents.changeCallback(SHOW_ARMOR).register((value, server) -> syncClientRules(server));
+		GameRuleEvents.changeCallback(BODY_LIMITS).register((value, server) -> syncClientRules(server));
 	}
 
 	private static void syncClientRules(MinecraftServer server) {
 		ServerLevel level = server.overworld();
 		server.globalAttachments().setAttached(CLIENT_RULES,
-			new ClientRules(level.getGameRules().get(SHOW_NAMETAGS), level.getGameRules().get(SHOW_ARMOR)));
+			new ClientRules(level.getGameRules().get(SHOW_NAMETAGS), level.getGameRules().get(SHOW_ARMOR), level.getGameRules().get(BODY_LIMITS)));
 	}
 
 	/** The disguise rules, on either side. */

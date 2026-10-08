@@ -9,14 +9,17 @@ A Fabric mod for Minecraft 26.3. Kill a mob to unlock it, then morph into it. Yo
 - **Take the mob's body.** Your hitbox, max health and model all change to the mob's. Other players see the mob too, holding whatever you hold and wearing your armour if it has armour slots, with its walk, attack and idle animations. Your old body shrinks away in a puff of smoke as the new one grows in.
 - **Sound like the mob.** Your hurt, death, fall and step sounds are the mob's, and now and then you make its idle sound (not while sneaking). A baby zombie squeaks higher, and a ghast is heard from far away.
 - **Pass for a real mob.** No name floats over a morphed player, unless the server turns `morph:show_nametags` on.
-- **Abilities.** Parrots, bats, bees, ghasts and blazes can fly. Phantoms glide like they have an elytra and flap to gain height. Spiders climb walls. Fish and squid breathe and swim fast underwater. Striders walk on lava. Rabbits and horses run fast and jump high. Nether mobs are fire immune.
+- **Abilities.** Parrots, bats, bees, ghasts and blazes can fly. Phantoms glide like they have an elytra and flap to gain height. Spiders climb walls. Fish and squid breathe and swim fast underwater. Striders walk on lava. Rabbits and horses run fast and jump high, and horses and foxes fall further unhurt. Nether mobs are fire immune.
 - **Powers.** Many mobs come with an active power on a cooldown. Blazes shoot fireballs, endermen teleport, creepers explode (you survive it), wardens use a sonic boom, skeletons shoot arrows, evokers summon fangs, goats ram, foxes pounce, sniffers dig up seeds, and dozens more.
 - **Weaknesses.** Zombies and skeletons burn in daylight. Fish dry out on land. Water hurts blazes and endermen. Healing potions hurt you as an undead mob.
-- **Mob relations.** Monsters treat you like the mob you look like. A zombie ignores you as a cow or another zombie but still attacks you as a villager. Creepers run from you as a cat, and village iron golems go after you as a monster. Hit a monster and it fights back no matter what you are.
+- **Immunities.** What the mob shrugs off, you do too. Spiders ignore poison and walk through cobwebs, wither skeletons don't wither, undead mobs ignore poison and regeneration, strays don't freeze in powder snow, and rabbits and foxes walk on top of it. Becoming a mob cures what it's immune to.
+- **Mob relations.** Monsters treat you like the mob you look like. A zombie ignores you as a cow or another zombie but still attacks you as a villager. Creepers run from you as a cat, phantoms break off their swoop, and village iron golems go after you as a monster. Piglins go for you as a wither skeleton unless you wear gold. Endermen don't mind being looked at by another enderman. Villagers run from you as a zombie or an illager, and won't trade with you. Hit a monster and it fights back no matter what you are.
+- **Living in the body.** Lightning turns a creeper into a charged creeper, with a blast twice as big. Others can shear you as a sheep (eat grass to grow it back), milk you as a cow or goat, and fill a bowl from you as a mooshroom. To do it to yourself, sneak and use the item.
+- **Be ridden.** As a horse, donkey, mule, camel, pig or strider, another player can put a saddle on you and climb on with an empty hand; as a happy ghast, a harness. You do the walking, they enjoy the ride. Shears take the saddle off, and it drops if you change into something that can't wear it.
 - **Morph sidebar.** Press `M` to open a panel with 3D previews of every unlocked morph, then click one to morph into it. Type in the search box to find a mob, and press Enter to morph into the first match.
 - **Favourites.** In the sidebar, press `F` or middle-click a morph to star it. Starred morphs go to the top of the list. Hold the backtick key to get a ring of them around the cursor, point at one and let go.
 - **Quick toggle.** Press `B` to go back to yourself, and again to become the last mob you were.
-- **Server settings.** Gamerules for how many kills unlock a morph, losing morphs on death, morphing on unlock, flight and how monsters treat you. Datapack tags to block mobs or their powers.
+- **Server settings.** Gamerules for how many kills unlock a morph, losing morphs on death, morphing on unlock, flight, how monsters treat you and optional body limits. Datapack tags to block mobs or their powers.
 - **Datapack-driven mobs.** Each mob's abilities, power and melee effects are a JSON file, so a datapack can rebalance any mob or give modded mobs abilities and powers. Other mods can hook into unlocks and morphs.
 
 ## Controls
@@ -53,16 +56,25 @@ Set these with `/gamerule`, or under *More World Options → Game Rules* when cr
 | `morph:flight_needs_advancement` | `false` | When `true`, flying mobs only flutter down until you've been to the End. See [Earning flight](#earning-flight). |
 | `morph:show_nametags` | `false` | Show a morphed player's name over the mob. Off, they pass for a real mob. |
 | `morph:show_armor` | `true` | Mobs with armour slots (zombies, skeletons, piglins...) wear the player's armour. |
+| `morph:body_limits` | `false` | When `true`, your body limits what you can do. See [Body limits](#body-limits). |
 | `morph:monster_behavior` | `DISGUISE` | `DISGUISE`: monsters treat you like the mob you look like. `MONSTERS_ONLY`: monsters leave you alone only while you're a monster. `SHORT_RANGE`: monsters `DISGUISE` would fool still attack, but only notice you from half as far. `OFF`: morphing doesn't change how mobs treat you. |
+
+## Body limits
+
+With `morph:body_limits` on, survival players live with what their body can do. Creative mode ignores it.
+
+- **Hands.** Only mobs in `#morph:has_hands` (zombies, skeletons, piglins, illagers, villagers, witches, allays, vexes, golems, endermen and others) can use, place or wear things. Any other body can still eat and drink, and takes off any armour.
+- **Diet.** Animals eat what they're bred with. Beyond that, meat-eaters (wolves, cats, foxes...) eat only meat and fish, and plant-eaters don't eat meat or fish. Other mobs eat anything.
 
 ## Datapack tags
 
-Both entity type tags are empty by default. Add mobs to them in a datapack, with `"replace": false`.
+`#morph:blocked` and `#morph:powerless` are empty by default. Add mobs to any of these in a datapack, with `"replace": false`.
 
 | Tag | Effect |
 | --- | --- |
 | `#morph:blocked` | These mobs can't be unlocked or morphed into. Anyone who is one goes back to their own body. |
 | `#morph:powerless` | Morphing into these mobs works, but their active power is turned off. |
+| `#morph:has_hands` | With `morph:body_limits` on, these mobs can use items and wear armour. Holds the vanilla humanoids. |
 
 For example, `data/morph/tags/entity_type/blocked.json`:
 

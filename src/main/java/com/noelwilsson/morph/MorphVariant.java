@@ -51,6 +51,8 @@ public record MorphVariant(Identifier id, CompoundTag data) {
 		"Color", "Sheared", "sheared", "variant", "Variant", "Type", "type", "RabbitType", "MainGene", "HiddenGene",
 		"VillagerData", "powered", "Size", "size", "Pumpkin", "HasLeftHorn", "HasRightHorn", "weather_state",
 		"carriedBlockState", "IsBaby", "Age", "ChestedHorse");
+	/** Appearance keys that change on a living body (MorphBody) rather than marking a different one. */
+	private static final Set<String> BODY_STATE_KEYS = Set.of("Sheared", "sheared", "powered", "Pumpkin");
 	/** Name tags with a vanilla easter egg: rainbow sheep, upside-down mobs, the Toast rabbit, Johnny. */
 	private static final Set<String> SPECIAL_NAMES = Set.of("jeb_", "Dinnerbone", "Grumm", "Toast", "Johnny");
 	private static final int BABY_AGE = -24000;
@@ -129,6 +131,23 @@ public record MorphVariant(Identifier id, CompoundTag data) {
 			}
 		}
 		return String.join(", ", words);
+	}
+
+	/**
+	 * Whether the two are the same mob and differ only in something that happens to a body (sheared, charged, a
+	 * snow golem's pumpkin), not in which body it is. Those change without the morph animation.
+	 */
+	public boolean sameBodyAs(@Nullable MorphVariant other) {
+		if (other == null || !id.equals(other.id)) {
+			return false;
+		}
+		CompoundTag mine = data.copy();
+		CompoundTag theirs = other.data.copy();
+		BODY_STATE_KEYS.forEach(key -> {
+			mine.remove(key);
+			theirs.remove(key);
+		});
+		return mine.equals(theirs);
 	}
 
 	/** The NBT a command takes to pick this variant, e.g. {Color:14b}. */

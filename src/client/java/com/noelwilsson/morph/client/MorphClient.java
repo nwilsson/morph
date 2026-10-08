@@ -2,6 +2,7 @@ package com.noelwilsson.morph.client;
 
 import com.noelwilsson.morph.Morph;
 import com.noelwilsson.morph.MorphAnimationPayload;
+import com.noelwilsson.morph.MorphBody;
 import com.noelwilsson.morph.MorphFlapPayload;
 import com.noelwilsson.morph.MorphPowerPayload;
 import com.noelwilsson.morph.MorphPowers;
@@ -235,8 +236,9 @@ public class MorphClient implements ClientModInitializer {
 	public static @Nullable Entity disguise(Player player) {
 		MorphVariant variant = MorphState.currentVariant(player);
 		UUID uuid = player.getUUID();
-		// Not seen before (just joined, just came into view) isn't a change.
-		boolean changed = SEEN_LOOKS.containsKey(uuid) && !Objects.equals(SEEN_LOOKS.get(uuid), variant);
+		// Not seen before (just joined, just came into view) isn't a change, and neither is a sheep being sheared.
+		MorphVariant seen = SEEN_LOOKS.get(uuid);
+		boolean changed = SEEN_LOOKS.containsKey(uuid) && !Objects.equals(seen, variant) && (variant == null || !variant.sameBodyAs(seen));
 		SEEN_LOOKS.put(uuid, variant);
 		Entity before = DISGUISES.get(uuid);
 		Entity disguise = makeDisguise(player, variant);
@@ -443,6 +445,15 @@ public class MorphClient implements ClientModInitializer {
 				if (!ItemStack.matches(worn, living.getItemBySlot(slot))) {
 					living.setItemSlot(slot, worn.copy());
 				}
+			}
+		}
+		// The saddle or harness others put on the body.
+		ItemStack tack = MorphBody.tack(player);
+		EquipmentSlot tackSlot = tack.isEmpty() ? null : MorphBody.tackSlot(disguise.getType(), tack);
+		for (EquipmentSlot slot : List.of(EquipmentSlot.SADDLE, EquipmentSlot.BODY)) {
+			ItemStack worn = slot == tackSlot ? tack : ItemStack.EMPTY;
+			if (!ItemStack.matches(worn, living.getItemBySlot(slot))) {
+				living.setItemSlot(slot, worn.copy());
 			}
 		}
 	}

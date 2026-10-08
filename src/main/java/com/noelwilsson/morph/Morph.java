@@ -4,6 +4,7 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -32,6 +33,9 @@ public class Morph implements ModInitializer {
 		MorphPowers.init();
 		MorphMobs.init();
 		MorphRules.init();
+		MorphBody.init();
+		MorphLimits.init();
+		ServerLifecycleEvents.SERVER_STOPPED.register(server -> MorphTemplates.forgetServer());
 
 		PayloadTypeRegistry.serverboundPlay().register(MorphPowerPayload.TYPE, MorphPowerPayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(MorphPowerPayload.TYPE, (payload, context) -> MorphPowers.use(context.player()));
@@ -99,17 +103,7 @@ public class Morph implements ModInitializer {
 			if (!MorphState.unlock(player, variant)) {
 				return; // another mod said no (MorphEvents.ALLOW_UNLOCK)
 			}
-			// A toast with the mob in it; a chat line for clients that can't show one.
-			if (ServerPlayNetworking.canSend(player, MorphUnlockPayload.TYPE)) {
-				ServerPlayNetworking.send(player, new MorphUnlockPayload(variant));
-			} else {
-				String look = variant.describe(player.level());
-				String command = "/morph " + variant.id().getPath() + (variant.isDefault() ? "" : " " + variant.snbt());
-				player.sendSystemMessage(Component.literal("Unlocked morph: ").append(entity.getType().getDescription())
-					.append(look.isEmpty() ? "" : " (" + look + ")")
-					.append(Component.literal("  " + command).withStyle(ChatFormatting.GRAY)));
-			}
-			LOGGER.info("{} unlocked morph {} {}", player.getName().getString(), entity.getType(), variant.snbt());
+			announceUnlock(player, variant);
 			if (MorphRules.morphOnUnlock(player.level()) && player.isAlive()) {
 				MorphState.morph(player, variant);
 			}
@@ -128,6 +122,7 @@ public class Morph implements ModInitializer {
 			server.getPlayerList().getPlayers().forEach(MorphSounds::tick);
 			if (server.getTickCount() % 20 == 0) {
 				server.getPlayerList().getPlayers().forEach(MorphState::apply);
+				server.getPlayerList().getPlayers().forEach(MorphLimits::tick);
 			}
 			MorphPowers.tick(server);
 		});
@@ -135,5 +130,21 @@ public class Morph implements ModInitializer {
 		CommandRegistrationCallback.EVENT.register((dispatcher, context, selection) -> MorphCommands.register(dispatcher, context));
 
 		LOGGER.info("Morph loaded");
+	}
+
+	/** Tells the player about a new morph: a toast with the mob in it, or a chat line for clients that can't show one. */
+	public static void announceUnlock(ServerPlayer player, MorphVariant variant) {
+		if (ServerPlayNetworking.canSend(player, MorphUnlockPayload.TYPE)) {
+			ServerPlayNetworking.send(player, new MorphUnlockPayload(variant));
+		} else {
+			EntityType<?> type = variant.type();
+			String look = variant.describe(player.level());
+			String command = "/morph " + variant.id().getPath() + (variant.isDefault() ? "" : " " + variant.snbt());
+			player.sendSystemMessage(Component.literal("Unlocked morph: ")
+				.append(type == null ? Component.literal(variant.id().toString()) : type.getDescription())
+				.append(look.isEmpty() ? "" : " (" + look + ")")
+				.append(Component.literal("  " + command).withStyle(ChatFormatting.GRAY)));
+		}
+		LOGGER.info("{} unlocked morph {} {}", player.getName().getString(), variant.id(), variant.snbt());
 	}
 }

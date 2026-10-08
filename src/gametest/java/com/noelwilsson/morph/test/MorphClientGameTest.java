@@ -786,7 +786,9 @@ public class MorphClientGameTest implements FabricClientGameTest {
 		check(heard.contains(SoundEvents.ZOMBIE_STEP.location()), "zombie morph: client step sound isn't the zombie's: " + heard);
 		world.getServer().runOnServer(server -> {
 			ServerPlayer player = world.getConnection().getServerPlayer();
-			player.hurtServer(player.level(), player.damageSources().generic(), 1.0F);
+			// A hit right after another (within half a second) that isn't harder is ignored without a sound: clear that.
+			player.damageCooldownTime = 0;
+			check(player.hurtServer(player.level(), player.damageSources().generic(), 1.0F), "zombie morph: the test hit didn't land");
 			// The idle sound is a dice roll that gets likelier every tick (Mob.baseTick); a thousand ticks always roll it.
 			for (int i = 0; i < 1100; i++) {
 				MorphSounds.tick(player);

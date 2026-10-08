@@ -2,6 +2,10 @@ package com.noelwilsson.morph;
 
 import com.noelwilsson.morph.mixin.MobAccessor;
 import com.noelwilsson.morph.mixin.NearestAttackableTargetGoalAccessor;
+import com.noelwilsson.morph.mixin.VillagerHostilesSensorAccessor;
+import net.minecraft.world.entity.boss.wither.WitherBoss;
+import net.minecraft.world.entity.monster.piglin.AbstractPiglin;
+import net.minecraft.world.entity.monster.skeleton.WitherSkeleton;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -86,6 +90,11 @@ public final class MorphRelations {
 		if (attacker.getType() == EntityTypes.WARDEN || attacker.getType() == EntityTypes.ZOGLIN) {
 			return body.getType() != EntityTypes.CREEPER && body.getType() != attacker.getType();
 		}
+		// Piglins fight wither skeletons and withers on sight (their nemeses), and piglins hunt hoglins (PiglinAi).
+		if (attacker instanceof AbstractPiglin) {
+			return body instanceof WitherSkeleton || body instanceof WitherBoss
+				|| attacker.getType() == EntityTypes.PIGLIN && body.getType() == EntityTypes.HOGLIN;
+		}
 		if (attacker instanceof Mob mob) {
 			for (WrappedGoal goal : ((MobAccessor) mob).morph$targetSelector().getAvailableGoals()) {
 				if (goal.getGoal() instanceof NearestAttackableTargetGoal<?> hunt) {
@@ -103,6 +112,37 @@ public final class MorphRelations {
 	public static boolean golemHunts(LivingEntity target) {
 		return looksLikeMonster(target) && MorphState.current((Player) target) != EntityTypes.CREEPER
 			&& behavior(target) != MorphRules.MonsterBehavior.OFF;
+	}
+
+	/**
+	 * How close a villager lets this player come before panicking, if the player looks like something villagers run
+	 * from (zombies, illagers, ravagers, vexes: VillagerHostilesSensor's list). Null if villagers don't mind them.
+	 */
+	public static @Nullable Float villagersFear(LivingEntity entity) {
+		if (!(entity instanceof Player player) || behavior(player) == MorphRules.MonsterBehavior.OFF) {
+			return null;
+		}
+		EntityType<?> type = MorphState.current(player);
+		return type == null ? null : VillagerHostilesSensorAccessor.morph$fearDistances().get(type);
+	}
+
+	/** Endermen don't take a look from an enderman as a challenge. */
+	public static boolean isFellowEnderman(Player player) {
+		return MorphState.current(player) == EntityTypes.ENDERMAN && behavior(player) != MorphRules.MonsterBehavior.OFF;
+	}
+
+	/** A cat-morphed player within 16 blocks, which sends a swooping phantom off like a real cat does. */
+	public static boolean catPlayerNear(Mob phantom) {
+		if (behavior(phantom) == MorphRules.MonsterBehavior.OFF) {
+			return false;
+		}
+		for (Player player : phantom.level().players()) {
+			if (MorphState.current(player) == EntityTypes.CAT && player.isAlive() && !player.isSpectator()
+				&& phantom.getBoundingBox().inflate(16.0).intersects(player.getBoundingBox())) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Creepers run from cats and ocelots, and from players who are one. */

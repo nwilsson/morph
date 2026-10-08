@@ -76,6 +76,8 @@ public final class MorphState {
 	private static final Identifier SPEED_MODIFIER = Morph.id("speed");
 	private static final Identifier JUMP_MODIFIER = Morph.id("jump");
 	private static final Identifier ATTACK_MODIFIER = Morph.id("attack");
+	private static final Identifier SAFE_FALL_MODIFIER = Morph.id("safe_fall");
+	private static final Identifier FALL_DAMAGE_MODIFIER = Morph.id("fall_damage");
 	private static final double PLAYER_BASE_ATTACK = 1.0;
 	private static final double PLAYER_BASE_HEALTH = 20.0;
 	/** Health is carried between bodies in steps of this fraction of a point. */
@@ -228,9 +230,16 @@ public final class MorphState {
 		player.setAttached(CURRENT, variant);
 		player.setAttached(LAST, variant);
 		MorphPowers.changedBody(player);
+		MorphBody.changedBody(player);
 		player.refreshDimensions();
 		apply(player);
 		setHealthFraction(player, fraction, before);
+		// Effects the new body is immune to wear off: becoming a spider cures poison.
+		for (MobEffectInstance effect : List.copyOf(player.getActiveEffects())) {
+			if (!player.canBeAffected(effect)) {
+				player.removeEffect(effect.getEffect());
+			}
+		}
 		EntityType<?> type = variant.type();
 		if (type != null && MorphAbilities.of(type, player.level()).contains(MorphAbilities.Ability.FLY) && !MorphRules.mayFly(player)
 			&& MorphRules.allowFlight(player.level())) {
@@ -238,6 +247,18 @@ public final class MorphState {
 		}
 		MorphEvents.AFTER_MORPH.invoker().afterMorph(player, from, variant);
 		return true;
+	}
+
+	/**
+	 * Something happened to the body rather than a change of body: a sheep was sheared or ate grass, a creeper was
+	 * charged. Same mob, new look, no animation and no MorphEvents. Ignored if it's a different mob. The toggle key
+	 * still goes back to the look the player picked, since a sheared sheep isn't one they unlocked.
+	 */
+	public static void changeLook(ServerPlayer player, MorphVariant look) {
+		MorphVariant current = player.getAttached(CURRENT);
+		if (current != null && current.id().equals(look.id())) {
+			player.setAttached(CURRENT, look);
+		}
 	}
 
 	/** Back to the player's own body. False if a MorphEvents.ALLOW_MORPH listener stopped it. */
@@ -263,6 +284,7 @@ public final class MorphState {
 		player.removeAttached(CURRENT);
 		clearAbilities(player);
 		MorphPowers.changedBody(player);
+		MorphBody.changedBody(player);
 		player.refreshDimensions();
 		setHealthFraction(player, fraction, before);
 		MorphEvents.AFTER_MORPH.invoker().afterMorph(player, from, null);
@@ -313,6 +335,9 @@ public final class MorphState {
 		if (player.getHealth() > player.getMaxHealth()) {
 			player.setHealth(player.getMaxHealth());
 		}
+		// Falls hurt like they hurt the mob: a horse lands a 6-block drop (its own leap) safely and takes half damage.
+		matchAttribute(player, mob, Attributes.SAFE_FALL_DISTANCE, SAFE_FALL_MODIFIER);
+		matchAttribute(player, mob, Attributes.FALL_DAMAGE_MULTIPLIER, FALL_DAMAGE_MODIFIER);
 
 		Set<MorphAbilities.Ability> abilities = MorphAbilities.of(type, player.level());
 		if (abilities.contains(MorphAbilities.Ability.SPEED)) {
@@ -403,6 +428,8 @@ public final class MorphState {
 		removeModifier(player, Attributes.MOVEMENT_SPEED, SPEED_MODIFIER);
 		removeModifier(player, Attributes.JUMP_STRENGTH, JUMP_MODIFIER);
 		removeModifier(player, Attributes.ATTACK_DAMAGE, ATTACK_MODIFIER);
+		removeModifier(player, Attributes.SAFE_FALL_DISTANCE, SAFE_FALL_MODIFIER);
+		removeModifier(player, Attributes.FALL_DAMAGE_MULTIPLIER, FALL_DAMAGE_MODIFIER);
 		if (!player.isCreative() && !player.isSpectator() && player.getAbilities().mayfly) {
 			player.getAbilities().mayfly = false;
 			player.getAbilities().flying = false;
@@ -414,6 +441,18 @@ public final class MorphState {
 			Optional.ofNullable(player.getEffect(effect))
 				.filter(instance -> instance.isAmbient() && !instance.isVisible())
 				.ifPresent(instance -> player.removeEffect(effect));
+		}
+	}
+
+	/** Brings the player's attribute to the mob's value, where the mob's differs from a player's. */
+	private static void matchAttribute(ServerPlayer player, AttributeSupplier mob, Holder<net.minecraft.world.entity.ai.attributes.Attribute> attribute,
+		Identifier id) {
+		AttributeInstance own = player.getAttribute(attribute);
+		double difference = mob.hasAttribute(attribute) && own != null ? mob.getValue(attribute) - own.getBaseValue() : 0.0;
+		if (difference != 0.0) {
+			setModifier(player, attribute, id, difference, AttributeModifier.Operation.ADD_VALUE);
+		} else {
+			removeModifier(player, attribute, id);
 		}
 	}
 

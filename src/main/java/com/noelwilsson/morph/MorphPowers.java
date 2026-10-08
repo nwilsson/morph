@@ -45,6 +45,7 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.projectile.EvokerFangs;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ShulkerBullet;
@@ -223,6 +224,7 @@ public final class MorphPowers {
 			}
 			p.heal(2.0F);
 			p.getFoodData().eat(2, 0.3F);
+			MorphBody.ate(p); // a sheared sheep grows its wool back
 			return play(p, l, SoundEvents.GENERIC_EAT.value());
 		});
 	}
@@ -550,12 +552,15 @@ public final class MorphPowers {
 		}
 
 		private void blast(ServerPlayer player) {
+			// A charged creeper's blast is twice as big (Creeper.explodeCreeper).
+			MorphVariant look = MorphState.currentVariant(player);
+			boolean charged = look != null && MorphTemplates.get(look, player.level()) instanceof Creeper creeper && creeper.isPowered();
 			player.level().explode(player, null, new ExplosionDamageCalculator() {
 				@Override
 				public boolean shouldDamageEntity(Explosion explosion, Entity entity) {
 					return entity != player;
 				}
-			}, player.position(), power, fire, Level.ExplosionInteraction.MOB);
+			}, player.position(), charged ? power * 2 : power, fire, Level.ExplosionInteraction.MOB);
 		}
 	}
 
