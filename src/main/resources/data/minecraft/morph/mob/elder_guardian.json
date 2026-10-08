@@ -1,0 +1,19 @@
+{
+	"abilities": [
+		"water_breathing",
+		"swim"
+	],
+	"power": {
+		"type": "morph:laser",
+		"name": "Laser",
+		"cooldown": 40,
+		"damage": 8.0,
+		"effects": [
+			{
+				"id": "minecraft:mining_fatigue",
+				"duration": 1200,
+				"amplifier": 2
+			}
+		]
+	}
+}

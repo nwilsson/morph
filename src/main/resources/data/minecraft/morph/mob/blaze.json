@@ -1,0 +1,17 @@
+{
+	"abilities": [
+		"fly"
+	],
+	"power": {
+		"type": "morph:projectile",
+		"name": "Fireballs",
+		"cooldown": 40,
+		"entity": "minecraft:small_fireball",
+		"count": 3,
+		"spread": 0.06,
+		"sound": "minecraft:entity.blaze.shoot"
+	},
+	"on_hit": {
+		"fire_seconds": 5
+	}
+}

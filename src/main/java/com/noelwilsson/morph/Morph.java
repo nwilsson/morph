@@ -30,6 +30,7 @@ public class Morph implements ModInitializer {
 	public void onInitialize() {
 		MorphState.init();
 		MorphPowers.init();
+		MorphMobs.init();
 		MorphRules.init();
 
 		PayloadTypeRegistry.serverboundPlay().register(MorphPowerPayload.TYPE, MorphPowerPayload.CODEC);
@@ -45,12 +46,14 @@ public class Morph implements ModInitializer {
 			if (!player.isAlive() || player.isSpectator()) {
 				return;
 			}
-			if (!MorphState.toggle(player)) {
-				player.sendOverlayMessage(Component.literal("No morph to go back to yet"));
-			} else {
-				EntityType<?> type = MorphState.current(player);
-				player.sendOverlayMessage(type == null ? Component.literal("You're yourself again")
-					: Component.literal("You are now a ").append(type.getDescription()));
+			switch (MorphState.toggle(player)) {
+				case NOTHING_TO_GO_BACK_TO -> player.sendOverlayMessage(Component.literal("No morph to go back to yet"));
+				case STOPPED -> player.sendOverlayMessage(Component.literal("Something is stopping you changing body"));
+				case CHANGED -> {
+					EntityType<?> type = MorphState.current(player);
+					player.sendOverlayMessage(type == null ? Component.literal("You're yourself again")
+						: Component.literal("You are now a ").append(type.getDescription()));
+				}
 			}
 		});
 		PayloadTypeRegistry.clientboundPlay().register(MorphAnimationPayload.TYPE, MorphAnimationPayload.CODEC);
@@ -93,7 +96,9 @@ public class Morph implements ModInitializer {
 					return;
 				}
 			}
-			MorphState.unlock(player, variant);
+			if (!MorphState.unlock(player, variant)) {
+				return; // another mod said no (MorphEvents.ALLOW_UNLOCK)
+			}
 			// A toast with the mob in it; a chat line for clients that can't show one.
 			if (ServerPlayNetworking.canSend(player, MorphUnlockPayload.TYPE)) {
 				ServerPlayNetworking.send(player, new MorphUnlockPayload(variant));

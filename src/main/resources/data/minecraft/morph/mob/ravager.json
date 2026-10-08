@@ -1,0 +1,15 @@
+{
+	"power": {
+		"type": "morph:burst",
+		"name": "Roar",
+		"cooldown": 80,
+		"radius": 4.0,
+		"damage": 6.0,
+		"knockback": 1.5,
+		"particle": "minecraft:poof",
+		"sound": "minecraft:entity.ravager.roar"
+	},
+	"on_hit": {
+		"launch": 0.4
+	}
+}

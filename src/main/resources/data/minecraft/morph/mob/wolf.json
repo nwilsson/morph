@@ -1,0 +1,13 @@
+{
+	"abilities": [
+		"speed"
+	],
+	"power": {
+		"type": "morph:leap",
+		"name": "Pounce",
+		"cooldown": 40,
+		"forward": 1.0,
+		"up": 0.45,
+		"at_target": true
+	}
+}

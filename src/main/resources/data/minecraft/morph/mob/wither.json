@@ -1,0 +1,21 @@
+{
+	"abilities": [
+		"fly"
+	],
+	"power": {
+		"type": "morph:projectile",
+		"name": "Wither skull",
+		"cooldown": 20,
+		"entity": "minecraft:wither_skull",
+		"sound": "minecraft:entity.wither.shoot"
+	},
+	"on_hit": {
+		"effects": [
+			{
+				"id": "minecraft:wither",
+				"duration": 200,
+				"amplifier": 1
+			}
+		]
+	}
+}

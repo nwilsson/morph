@@ -1,0 +1,11 @@
+{
+	"power": {
+		"type": "morph:toss",
+		"name": "Toss",
+		"cooldown": 40,
+		"sound": "minecraft:entity.hoglin.attack"
+	},
+	"on_hit": {
+		"launch": 0.4
+	}
+}

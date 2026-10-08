@@ -1,0 +1,12 @@
+{
+	"power": {
+		"type": "morph:toss",
+		"name": "Toss",
+		"cooldown": 20,
+		"damage": 10.0,
+		"sound": "minecraft:entity.iron_golem.attack"
+	},
+	"on_hit": {
+		"launch": 0.4
+	}
+}

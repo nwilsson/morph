@@ -1,11 +1,17 @@
 package com.noelwilsson.morph;
 
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.DataResult;
+import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 import com.noelwilsson.morph.mixin.MobAccessor;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
@@ -13,10 +19,14 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -24,30 +34,25 @@ import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.TagKey;
+import net.minecraft.util.ExtraCodecs;
 import net.minecraft.util.Mth;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.projectile.EvokerFangs;
-import net.minecraft.world.entity.projectile.LlamaSpit;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ShulkerBullet;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
-import net.minecraft.world.entity.projectile.arrow.ThrownTrident;
 import net.minecraft.world.entity.projectile.hurtingprojectile.AbstractHurtingProjectile;
-import net.minecraft.world.entity.projectile.hurtingprojectile.DragonFireball;
-import net.minecraft.world.entity.projectile.hurtingprojectile.LargeFireball;
-import net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball;
-import net.minecraft.world.entity.projectile.hurtingprojectile.WitherSkull;
-import net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.WindCharge;
-import net.minecraft.world.entity.projectile.throwableitemprojectile.Snowball;
 import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownSplashPotion;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.alchemy.PotionContents;
@@ -60,6 +65,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LevelEvent;
 import net.minecraft.world.level.storage.loot.BuiltInLootTables;
+import net.minecraft.world.level.storage.loot.LootTable;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -67,8 +73,10 @@ import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Active powers (the "use power" key) and melee effects, modelled on what each mob does in vanilla. Powers run on the
- * server; the client only sends "use" and draws the cooldown from the synced attachment.
+ * Active powers (the "use power" key) and melee effects. Which mob has which power comes from its data file (see
+ * {@link MorphMobs}), which names a power type and its settings:
+ * <pre>{"type": "morph:projectile", "entity": "minecraft:small_fireball", "count": 3, "cooldown": 40, "name": "Fireballs"}</pre>
+ * Powers run on the server; the client only sends "use" and draws the cooldown from the synced attachment.
  */
 public final class MorphPowers {
 	/**
@@ -93,9 +101,32 @@ public final class MorphPowers {
 		boolean use(ServerPlayer player, ServerLevel level);
 	}
 
-	public record Power(String name, int cooldown, Action action) {}
+	/**
+	 * A kind of power a data file can name: its settings (the codec) and what a file gets when it leaves out
+	 * "name" and "cooldown". Other mods add theirs with {@link #registerType} during init.
+	 */
+	public record PowerType(Identifier id, String name, int cooldown, MapCodec<? extends Action> codec) {
+		public static final Codec<PowerType> CODEC = Identifier.CODEC.comapFlatMap(
+			id -> Optional.ofNullable(TYPES.get(id)).map(DataResult::success)
+				.orElseGet(() -> DataResult.error(() -> "Unknown morph power type " + id + ", known: " + TYPES.keySet())),
+			PowerType::id);
 
-	private static final Map<String, Power> POWERS = new HashMap<>();
+		@SuppressWarnings("unchecked")
+		private MapCodec<Power> powerCodec() {
+			return RecordCodecBuilder.mapCodec(i -> i.group(
+				((MapCodec<Action>) codec).forGetter(Power::action),
+				Codec.STRING.optionalFieldOf("name", name).forGetter(Power::name),
+				ExtraCodecs.NON_NEGATIVE_INT.optionalFieldOf("cooldown", cooldown).forGetter(Power::cooldown)
+			).apply(i, (action, name, cooldown) -> new Power(this, name, cooldown, action)));
+		}
+	}
+
+	/** A mob's power: the action and how it's shown and paced. */
+	public record Power(PowerType type, String name, int cooldown, Action action) {
+		public static final Codec<Power> CODEC = PowerType.CODEC.dispatch("type", Power::type, PowerType::powerCodec);
+	}
+
+	private static final Map<Identifier, PowerType> TYPES = new LinkedHashMap<>();
 	/** Game time each gliding player can flap again. */
 	private static final Map<UUID, Long> NEXT_FLAP = new HashMap<>();
 	public static final int FLAP_COOLDOWN = 20;
@@ -103,38 +134,30 @@ public final class MorphPowers {
 	private static final double FLAP_UP = 0.4;
 	/** Firework-boosted elytra flight tops out around 1.7 blocks a tick; flapping stays under it. */
 	private static final double FLAP_MAX_SPEED = 1.0;
-	/** Creepers explode after a fuse, like the real thing. */
-	private static final Map<UUID, Long> FUSES = new HashMap<>();
-	private static final int CREEPER_FUSE = 30;
+	/** Powers that go off after a wind-up (a creeper's fuse, a warden's charge), by player. */
+	private static final Map<UUID, Delayed> DELAYED = new HashMap<>();
 	/** The sonic boom fires partway through the warden's wind-up animation, like the real one (SonicBoom). */
-	private static final Map<UUID, Long> SONIC_BOOMS = new HashMap<>();
 	private static final int SONIC_BOOM_DELAY = 34;
 
+	private static final Codec<SoundEvent> SOUND = BuiltInRegistries.SOUND_EVENT.byNameCodec();
+	private static final Codec<List<MobEffectInstance>> EFFECTS = MobEffectInstance.CODEC.listOf();
+
 	static {
-		power("blaze", "Fireballs", 40, (p, l) -> {
-			for (int i = 0; i < 3; i++) {
-				Vec3 dir = spread(p, 0.06);
-				shoot(p, l, new SmallFireball(l, p, dir), dir);
-			}
-			return sound(p, l, SoundEvents.BLAZE_SHOOT);
-		});
-		power("ghast", "Fireball", 60, (p, l) -> {
-			Vec3 dir = p.getLookAngle();
-			shoot(p, l, new LargeFireball(l, p, dir, 1), dir);
-			return sound(p, l, SoundEvents.GHAST_SHOOT);
-		});
-		power("wither", "Wither skull", 20, (p, l) -> {
-			Vec3 dir = p.getLookAngle();
-			shoot(p, l, new WitherSkull(l, p, dir), dir);
-			return sound(p, l, SoundEvents.WITHER_SHOOT);
-		});
-		power("ender_dragon", "Dragon's breath", 60, (p, l) -> {
-			Vec3 dir = p.getLookAngle();
-			shoot(p, l, new DragonFireball(l, p, dir), dir);
-			return sound(p, l, SoundEvents.ENDER_DRAGON_SHOOT);
-		});
-		power("enderman", "Teleport", 20, MorphPowers::enderTeleport);
-		power("shulker", "Homing bullet", 40, (p, l) -> {
+		// General kinds with settings, for any mob.
+		registerType(Morph.id("projectile"), "Shoot", 20, Shoot.CODEC);
+		registerType(Morph.id("charge"), "Charge", 40, Charge.CODEC);
+		registerType(Morph.id("leap"), "Leap", 40, Leap.CODEC);
+		registerType(Morph.id("dash"), "Dash", 40, Dash.CODEC);
+		registerType(Morph.id("teleport"), "Teleport", 20, Teleport.CODEC);
+		registerType(Morph.id("explode"), "Explode", 200, Explode.CODEC);
+		registerType(Morph.id("burst"), "Burst", 100, Burst.CODEC);
+		registerType(Morph.id("laser"), "Laser", 40, Laser.CODEC);
+		registerType(Morph.id("toss"), "Toss", 40, Toss.CODEC);
+		registerType(Morph.id("drop_item"), "Drop", 600, DropItem.CODEC);
+		registerType(Morph.id("dig"), "Dig", 2400, Dig.CODEC);
+
+		// One mob's own move, with nothing to set.
+		fixed("homing_bullet", "Homing bullet", 40, (p, l) -> {
 			LivingEntity target = target(p, 24);
 			if (target == null) {
 				return fail(p, "No target in sight");
@@ -142,155 +165,38 @@ public final class MorphPowers {
 			ShulkerBullet bullet = new ShulkerBullet(l, p, target, Direction.Axis.Y);
 			bullet.setPos(p.getEyePosition().add(p.getLookAngle()));
 			l.addFreshEntity(bullet);
-			return sound(p, l, SoundEvents.SHULKER_SHOOT);
+			return play(p, l, SoundEvents.SHULKER_SHOOT);
 		});
-		power("creeper", "Explode", 200, (p, l) -> {
-			FUSES.put(p.getUUID(), l.getGameTime() + CREEPER_FUSE);
-			return sound(p, l, SoundEvents.CREEPER_PRIMED);
-		});
-		power("skeleton", "Arrow", 15, (p, l) -> arrow(p, l, null));
-		power("stray", "Frost arrow", 15, (p, l) -> arrow(p, l, new MobEffectInstance(MobEffects.SLOWNESS, 600)));
-		power("bogged", "Poison arrow", 15, (p, l) -> arrow(p, l, new MobEffectInstance(MobEffects.POISON, 100)));
-		power("snow_golem", "Snowball", 5, (p, l) -> {
-			throwItem(p, l, new Snowball(l, p, new ItemStack(Items.SNOWBALL)), 1.6F);
-			return sound(p, l, SoundEvents.SNOW_GOLEM_SHOOT);
-		});
-		power("witch", "Splash potion", 40, (p, l) -> {
+		// Harming, or poison while sneaking.
+		fixed("splash_potion", "Splash potion", 40, (p, l) -> {
 			ItemStack potion = PotionContents.createItemStack(Items.SPLASH_POTION, p.isShiftKeyDown() ? Potions.POISON : Potions.HARMING);
 			throwItem(p, l, new ThrownSplashPotion(l, p, potion), 0.75F);
-			return sound(p, l, SoundEvents.WITCH_THROW);
+			return play(p, l, SoundEvents.WITCH_THROW);
 		});
-		power("evoker", "Fangs", 60, (p, l) -> {
+		fixed("fangs", "Fangs", 60, (p, l) -> {
 			float yaw = (float) Math.toRadians(p.getYRot() + 90.0F);
 			for (int i = 1; i <= 12; i++) {
 				double x = p.getX() + Mth.cos(yaw) * 1.25 * i;
 				double z = p.getZ() + Mth.sin(yaw) * 1.25 * i;
 				l.addFreshEntity(new EvokerFangs(l, x, p.getY(), z, yaw, i, p));
 			}
-			return sound(p, l, SoundEvents.EVOKER_CAST_SPELL);
+			return play(p, l, SoundEvents.EVOKER_CAST_SPELL);
 		});
-		power("breeze", "Wind charge", 20, (p, l) -> {
-			WindCharge charge = new WindCharge(p, l, p.getX(), p.getEyeY(), p.getZ());
-			throwItem(p, l, charge, 1.5F);
-			return sound(p, l, SoundEvents.BREEZE_SHOOT);
-		});
-		Action spit = (p, l) -> {
-			LlamaSpit projectile = new LlamaSpit(EntityTypes.LLAMA_SPIT, l);
-			projectile.setOwner(p);
-			throwItem(p, l, projectile, 1.5F);
-			return sound(p, l, SoundEvents.LLAMA_SPIT);
-		};
-		power("llama", "Spit", 20, spit);
-		power("trader_llama", "Spit", 20, spit);
-		power("warden", "Sonic boom", 100, (p, l) -> {
-			SONIC_BOOMS.put(p.getUUID(), l.getGameTime() + SONIC_BOOM_DELAY);
+		fixed("sonic_boom", "Sonic boom", 100, (p, l) -> {
+			later(p, SONIC_BOOM_DELAY, player -> sonicBoom(player, player.level()), null);
 			MorphAnimationPayload.broadcast(p, MorphAnimationPayload.SONIC_BOOM);
-			return sound(p, l, SoundEvents.WARDEN_SONIC_CHARGE);
+			return play(p, l, SoundEvents.WARDEN_SONIC_CHARGE);
 		});
-		power("guardian", "Laser", 40, (p, l) -> laser(p, l, 6.0F, false));
-		power("elder_guardian", "Laser", 40, (p, l) -> laser(p, l, 8.0F, true));
-		power("drowned", "Trident", 30, (p, l) -> {
-			ThrownTrident trident = new ThrownTrident(l, p, new ItemStack(Items.TRIDENT));
-			trident.pickup = AbstractArrow.Pickup.CREATIVE_ONLY;
-			throwItem(p, l, trident, 2.5F);
-			return sound(p, l, SoundEvents.DROWNED_SHOOT);
-		});
-		power("chicken", "Lay egg", 600, (p, l) -> {
-			ItemEntity egg = new ItemEntity(l, p.getX(), p.getY(), p.getZ(), new ItemStack(Items.EGG));
-			egg.setDefaultPickUpDelay(); // laid on the ground, not straight into the pocket
-			l.addFreshEntity(egg);
-			return sound(p, l, SoundEvents.CHICKEN_EGG);
-		});
-		power("squid", "Ink cloud", 100, (p, l) -> ink(p, l, SoundEvents.SQUID_SQUIRT));
-		power("glow_squid", "Ink cloud", 100, (p, l) -> ink(p, l, SoundEvents.GLOW_SQUID_SQUIRT));
-		power("pufferfish", "Puff up", 60, (p, l) -> {
-			for (LivingEntity e : nearby(p, l, 3.0)) {
-				e.addEffect(new MobEffectInstance(MobEffects.POISON, 120, 0), p);
-				e.hurtServer(l, p.damageSources().mobAttack(p), 2.0F);
-			}
-			return sound(p, l, SoundEvents.PUFFER_FISH_BLOW_UP);
-		});
-		power("goat", "Ram", 60, (p, l) -> charge(p, l, 1.6, 4.0F, 2.5, SoundEvents.GOAT_RAM_IMPACT));
-		power("camel", "Dash", 60, (p, l) -> {
-			Vec3 look = flatLook(p);
-			setMotion(p, new Vec3(look.x * 2.2, 0.5, look.z * 2.2));
-			return sound(p, l, SoundEvents.CAMEL_DASH);
-		});
-		power("ravager", "Roar", 80, (p, l) -> {
-			for (LivingEntity e : nearby(p, l, 4.0)) {
-				e.hurtServer(l, p.damageSources().mobAttack(p), 6.0F);
-				Vec3 away = e.position().subtract(p.position()).normalize();
-				knock(e, away.x * 1.5, 0.3, away.z * 1.5);
-			}
-			l.sendParticles(ParticleTypes.POOF, p.getX(), p.getY() + 1, p.getZ(), 40, 2, 0.5, 2, 0.1);
-			return sound(p, l, SoundEvents.RAVAGER_ROAR);
-		});
-		power("iron_golem", "Toss", 20, (p, l) -> toss(p, l, 10.0F, SoundEvents.IRON_GOLEM_ATTACK));
-		// Hoglins throw what they hit into the air (Hoglin.throwTarget).
-		power("hoglin", "Toss", 40, (p, l) -> toss(p, l, attackDamage(p), SoundEvents.HOGLIN_ATTACK));
-		power("zoglin", "Toss", 40, (p, l) -> toss(p, l, attackDamage(p), SoundEvents.ZOGLIN_ATTACK));
-		power("armadillo", "Roll up", 200, (p, l) -> {
-			p.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, 100, 3));
-			p.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 100, 3));
-			return sound(p, l, SoundEvents.ARMADILLO_ROLL);
-		});
-		power("axolotl", "Play dead", 1200, (p, l) -> {
-			p.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 200, 0));
-			return sound(p, l, SoundEvents.AXOLOTL_ATTACK);
-		});
-		power("frog", "Tongue", 40, (p, l) -> {
+		fixed("tongue", "Tongue", 40, (p, l) -> {
 			LivingEntity target = target(p, 8);
 			if (target == null) {
 				return fail(p, "Nothing to grab");
 			}
 			Vec3 pull = p.position().subtract(target.position()).normalize().scale(1.2);
 			knock(target, pull.x, 0.3, pull.z);
-			return sound(p, l, SoundEvents.FROG_TONGUE);
+			return play(p, l, SoundEvents.FROG_TONGUE);
 		});
-
-		// Pounce: LeapAtTargetGoal, at whatever you're looking at (or straight ahead), a bit stronger than the mob's own.
-		Action pounce = (p, l) -> leap(p, l, 1.0, 0.45, true);
-		for (String mob : List.of("wolf", "cat", "ocelot", "spider", "cave_spider")) {
-			power(mob, "Pounce", 40, pounce);
-		}
-		// Foxes pounce high, onto prey from above (FoxPounceGoal).
-		power("fox", "Pounce", 40, (p, l) -> leap(p, l, 0.8, 0.9, true));
-		// Horses: the charged jump, forward and up.
-		Action horseLeap = (p, l) -> leap(p, l, 1.2, 0.9, false);
-		for (String mob : List.of("horse", "donkey", "mule", "skeleton_horse", "zombie_horse")) {
-			power(mob, "Leap", 40, horseLeap);
-		}
-		power("dolphin", "Dash", 40, (p, l) -> {
-			if (!p.isInWater()) {
-				return fail(p, "Only in water");
-			}
-			setMotion(p, p.getLookAngle().scale(1.8));
-			return sound(p, l, SoundEvents.DOLPHIN_JUMP);
-		});
-		// Nautiluses dash where their rider looks, hard in water and weakly on land (AbstractNautilus.executeRidersJump).
-		power("nautilus", "Dash", 40, (p, l) -> nautilusDash(p, l, SoundEvents.NAUTILUS_DASH, SoundEvents.NAUTILUS_DASH_ON_LAND));
-		power("zombie_nautilus", "Dash", 40, (p, l) -> nautilusDash(p, l, SoundEvents.ZOMBIE_NAUTILUS_DASH, SoundEvents.ZOMBIE_NAUTILUS_DASH_ON_LAND));
-		power("turtle", "Shell", 200, (p, l) -> {
-			p.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, 100, 2));
-			p.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 100, 2));
-			return sound(p, l, SoundEvents.ARMOR_EQUIP_TURTLE.value());
-		});
-		Action crossbow = (p, l) -> arrow(p, l, null, 3.15F, SoundEvents.CROSSBOW_SHOOT);
-		power("pillager", "Crossbow", 25, crossbow);
-		power("piglin", "Crossbow", 25, crossbow);
-		// The illusioner's two spells: turn invisible, blind whoever is near.
-		power("illusioner", "Mirror image", 200, (p, l) -> {
-			p.addEffect(new MobEffectInstance(MobEffects.INVISIBILITY, 100, 0));
-			for (LivingEntity e : nearby(p, l, 8.0)) {
-				e.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, 100, 0), p);
-			}
-			l.sendParticles(ParticleTypes.CLOUD, p.getX(), p.getY() + 1, p.getZ(), 30, 0.6, 0.8, 0.6, 0.02);
-			return sound(p, l, SoundEvents.ILLUSIONER_MIRROR_MOVE);
-		});
-		// Phantoms swoop and vexes charge: fly the way you look and hit what's in the path.
-		power("phantom", "Swoop", 40, (p, l) -> charge(p, l, p.getLookAngle(), 1.6, attackDamage(p), 1.0, SoundEvents.PHANTOM_SWOOP));
-		power("vex", "Charge", 40, (p, l) -> charge(p, l, p.getLookAngle(), 1.4, attackDamage(p), 0.8, SoundEvents.VEX_CHARGE));
-		power("polar_bear", "Swipe", 30, (p, l) -> {
+		fixed("swipe", "Swipe", 30, (p, l) -> {
 			Vec3 look = flatLook(p);
 			AABB front = p.getBoundingBox().expandTowards(look.scale(2.5)).inflate(0.5);
 			List<Entity> hit = l.getEntities(p, front, e -> e instanceof LivingEntity && e.isAlive());
@@ -301,10 +207,10 @@ public final class MorphPowers {
 				((LivingEntity) e).hurtServer(l, p.damageSources().mobAttack(p), attackDamage(p));
 				knock(e, look.x * 1.2, 0.3, look.z * 1.2);
 			}
-			return sound(p, l, SoundEvents.POLAR_BEAR_WARNING);
+			return play(p, l, SoundEvents.POLAR_BEAR_WARNING);
 		});
 		// Sheep graze: grass under you turns to dirt (EatBlockGoal), and it feeds you a little.
-		power("sheep", "Eat grass", 100, (p, l) -> {
+		fixed("graze", "Eat grass", 100, (p, l) -> {
 			BlockPos feet = p.blockPosition();
 			BlockPos below = feet.below();
 			if (l.getBlockState(feet).is(BlockTags.EDIBLE_FOR_SHEEP)) {
@@ -317,44 +223,50 @@ public final class MorphPowers {
 			}
 			p.heal(2.0F);
 			p.getFoodData().eat(2, 0.3F);
-			return sound(p, l, SoundEvents.GENERIC_EAT.value());
-		});
-		// Sniffers dig up ancient seeds from the sniffer's own loot table.
-		power("sniffer", "Dig", 2400, (p, l) -> {
-			BlockPos below = p.blockPosition().below();
-			if (!l.getBlockState(below).is(BlockTags.SNIFFER_DIGGABLE_BLOCK)) {
-				return fail(p, "Nothing to dig here");
-			}
-			p.dropFromGiftLootTable(l, BuiltInLootTables.SNIFFER_DIGGING, (level, stack) -> {
-				ItemEntity seed = new ItemEntity(level, p.getX(), p.getY() + 0.2, p.getZ(), stack);
-				seed.setDefaultPickUpDelay();
-				level.addFreshEntity(seed);
-			});
-			l.levelEvent(LevelEvent.PARTICLES_AND_SOUND_DESTROY_BLOCK, below, Block.getId(l.getBlockState(below)));
-			return sound(p, l, SoundEvents.SNIFFER_DROP_SEED);
+			return play(p, l, SoundEvents.GENERIC_EAT.value());
 		});
 	}
 
 	private MorphPowers() {}
 
 	public static void init() {
-		// Class loading registers the attachments.
+		// Class loading registers the attachments and the power types.
 	}
 
-	private static void power(String mob, String name, int cooldown, Action action) {
-		POWERS.put(mob, new Power(name, cooldown, action));
+	/**
+	 * Adds a power type data files can name. Call it from a mod initializer, before any data loads. Its default name
+	 * and cooldown are used when a file leaves them out.
+	 */
+	public static void registerType(Identifier id, String name, int cooldown, MapCodec<? extends Action> codec) {
+		if (TYPES.putIfAbsent(id, new PowerType(id, name, cooldown, codec)) != null) {
+			throw new IllegalArgumentException("Morph power type " + id + " is already registered");
+		}
 	}
 
+	private static void fixed(String path, String name, int cooldown, Action action) {
+		registerType(Morph.id(path), name, cooldown, MapCodec.unit(action));
+	}
+
+	/** Server side: the power this body has, or null. */
 	public static @Nullable Power of(@Nullable EntityType<?> type) {
 		if (type == null || MorphRules.isPowerless(type)) {
 			return null;
 		}
-		var id = BuiltInRegistries.ENTITY_TYPE.getKey(type);
-		return "minecraft".equals(id.getNamespace()) ? POWERS.get(id.getPath()) : null;
+		MorphMobs.Mob mob = MorphMobs.get(type);
+		return mob == null ? null : mob.power().orElse(null);
+	}
+
+	/** Either side: the name of the power this body has, or null if it has none. */
+	public static @Nullable String name(@Nullable EntityType<?> type, Level level) {
+		if (type == null || MorphRules.isPowerless(type)) {
+			return null;
+		}
+		MorphMobs.Synced mob = MorphMobs.synced(type, level);
+		return mob == null ? null : mob.power().orElse(null);
 	}
 
 	private static String key(EntityType<?> type) {
-		return BuiltInRegistries.ENTITY_TYPE.getKey(type).getPath();
+		return BuiltInRegistries.ENTITY_TYPE.getKey(type).toString();
 	}
 
 	/** Called when the client presses the power key. */
@@ -385,8 +297,7 @@ public final class MorphPowers {
 	 * shows the new body's cooldown, which carries on from whenever that mob's power was last used.
 	 */
 	public static void changedBody(ServerPlayer player) {
-		FUSES.remove(player.getUUID());
-		SONIC_BOOMS.remove(player.getUUID());
+		DELAYED.remove(player.getUUID());
 		NEXT_FLAP.remove(player.getUUID());
 		showCooldown(player);
 	}
@@ -410,10 +321,10 @@ public final class MorphPowers {
 	 */
 	public static void flap(ServerPlayer player) {
 		EntityType<?> type = MorphState.current(player);
-		if (type == null || !player.isFallFlying() || !MorphAbilities.of(type).contains(MorphAbilities.Ability.GLIDE)) {
+		ServerLevel level = player.level();
+		if (type == null || !player.isFallFlying() || !MorphAbilities.of(type, level).contains(MorphAbilities.Ability.GLIDE)) {
 			return;
 		}
-		ServerLevel level = player.level();
 		long now = level.getGameTime();
 		if (now < NEXT_FLAP.getOrDefault(player.getUUID(), 0L)) {
 			return;
@@ -433,66 +344,366 @@ public final class MorphPowers {
 		showCooldown(player);
 	}
 
+	/** A wound-up power: fires at {@code at} if the player is still alive in the same body, ticking {@code meanwhile} until then. */
+	private record Delayed(EntityType<?> body, long at, Consumer<ServerPlayer> fire, @Nullable Consumer<ServerPlayer> meanwhile) {}
+
+	private static void later(ServerPlayer player, int ticks, Consumer<ServerPlayer> fire, @Nullable Consumer<ServerPlayer> meanwhile) {
+		DELAYED.put(player.getUUID(), new Delayed(MorphState.current(player), player.level().getGameTime() + ticks, fire, meanwhile));
+	}
+
 	public static void tick(MinecraftServer server) {
-		for (Iterator<Map.Entry<UUID, Long>> it = SONIC_BOOMS.entrySet().iterator(); it.hasNext(); ) {
-			Map.Entry<UUID, Long> boom = it.next();
-			ServerPlayer player = server.getPlayerList().getPlayer(boom.getKey());
-			if (player == null || MorphState.current(player) != EntityTypes.WARDEN || !player.isAlive()) {
+		for (Iterator<Map.Entry<UUID, Delayed>> it = DELAYED.entrySet().iterator(); it.hasNext(); ) {
+			Map.Entry<UUID, Delayed> entry = it.next();
+			Delayed delayed = entry.getValue();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player == null || MorphState.current(player) != delayed.body() || !player.isAlive()) {
 				it.remove();
-			} else if (player.level().getGameTime() >= boom.getValue()) {
+			} else if (player.level().getGameTime() >= delayed.at()) {
 				it.remove();
-				sonicBoom(player, player.level());
-			}
-		}
-		for (Iterator<Map.Entry<UUID, Long>> it = FUSES.entrySet().iterator(); it.hasNext(); ) {
-			Map.Entry<UUID, Long> fuse = it.next();
-			ServerPlayer player = server.getPlayerList().getPlayer(fuse.getKey());
-			if (player == null || MorphState.current(player) != EntityTypes.CREEPER || !player.isAlive()) {
-				it.remove();
-				continue;
-			}
-			ServerLevel level = player.level();
-			if (level.getGameTime() >= fuse.getValue()) {
-				it.remove();
-				// Like a creeper, but the player survives their own blast.
-				level.explode(player, null, new ExplosionDamageCalculator() {
-					@Override
-					public boolean shouldDamageEntity(Explosion explosion, Entity entity) {
-						return entity != player;
-					}
-				}, player.position(), 3.0F, false, Level.ExplosionInteraction.MOB);
-			} else {
-				level.sendParticles(ParticleTypes.SMOKE, player.getX(), player.getY() + 1, player.getZ(), 4, 0.3, 0.5, 0.3, 0.01);
+				delayed.fire().accept(player);
+			} else if (delayed.meanwhile() != null) {
+				delayed.meanwhile().accept(player);
 			}
 		}
 	}
 
-	/** Melee hits by a morphed player carry the mob's own on-hit effect. */
+	/** Melee hits by a morphed player carry the mob's own on-hit effect (its file's "on_hit"). */
 	public static void onMeleeHit(ServerPlayer player, LivingEntity target) {
 		EntityType<?> type = MorphState.current(player);
-		if (type == null) {
+		MorphMobs.Mob mob = type == null ? null : MorphMobs.get(type);
+		if (mob == null || mob.onHit().isEmpty()) {
 			return;
 		}
-		var id = BuiltInRegistries.ENTITY_TYPE.getKey(type).getPath();
-		switch (id) {
-			case "bee", "cave_spider" -> target.addEffect(new MobEffectInstance(MobEffects.POISON, 200, 0), player);
-			case "wither_skeleton" -> target.addEffect(new MobEffectInstance(MobEffects.WITHER, 200, 0), player);
-			case "wither" -> target.addEffect(new MobEffectInstance(MobEffects.WITHER, 200, 1), player);
-			case "husk" -> target.addEffect(new MobEffectInstance(MobEffects.HUNGER, 140, 0), player);
-			case "blaze", "magma_cube" -> target.igniteForSeconds(5.0F);
-			case "iron_golem", "hoglin", "zoglin", "ravager" -> {
-				knock(target, 0, 0.4, 0);
+		MorphMobs.OnHit hit = mob.onHit().get();
+		for (MobEffectInstance effect : hit.effects()) {
+			target.addEffect(new MobEffectInstance(effect), player);
+		}
+		if (hit.fireSeconds() > 0) {
+			target.igniteForSeconds(hit.fireSeconds());
+		}
+		if (hit.launch() > 0) {
+			knock(target, 0, hit.launch(), 0);
+		}
+	}
+
+	// --- power types with settings ---
+
+	/**
+	 * Shoots {@code count} of any projectile entity. Fireballs and skulls (which steer themselves) fly where the
+	 * player looks; anything else, or anything given a {@code speed}, is thrown like an arrow. Arrows can carry effects.
+	 */
+	private record Shoot(EntityType<?> entity, int count, float spread, Optional<Float> speed, List<MobEffectInstance> effects,
+		Optional<SoundEvent> sound) implements Action {
+		static final MapCodec<Shoot> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			BuiltInRegistries.ENTITY_TYPE.byNameCodec().fieldOf("entity").forGetter(Shoot::entity),
+			ExtraCodecs.POSITIVE_INT.optionalFieldOf("count", 1).forGetter(Shoot::count),
+			ExtraCodecs.NON_NEGATIVE_FLOAT.optionalFieldOf("spread", 0.0F).forGetter(Shoot::spread),
+			ExtraCodecs.POSITIVE_FLOAT.optionalFieldOf("speed").forGetter(Shoot::speed),
+			EFFECTS.optionalFieldOf("effects", List.of()).forGetter(Shoot::effects),
+			SOUND.optionalFieldOf("sound").forGetter(Shoot::sound)
+		).apply(i, Shoot::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			for (int n = 0; n < count; n++) {
+				if (!(entity.create(l, EntitySpawnReason.TRIGGERED) instanceof Projectile projectile)) {
+					Morph.LOGGER.warn("Morph power for {} shoots {}, which isn't a projectile", MorphState.current(p), entity);
+					return fail(p, "This power is broken, see the server log");
+				}
+				projectile.setOwner(p);
+				if (projectile instanceof AbstractArrow arrow) {
+					arrow.pickup = AbstractArrow.Pickup.CREATIVE_ONLY;
+				}
+				if (projectile instanceof Arrow arrow) {
+					effects.forEach(effect -> arrow.addEffect(new MobEffectInstance(effect)));
+				}
+				if (speed.isEmpty() && projectile instanceof AbstractHurtingProjectile steered) {
+					Vec3 dir = spread > 0 ? MorphPowers.spread(p, spread) : p.getLookAngle();
+					steered.setYRot(p.getYRot());
+					steered.setXRot(p.getXRot());
+					steered.setDeltaMovement(dir.normalize().scale(steered.accelerationPower));
+					shoot(p, l, steered, dir);
+				} else {
+					throwItem(p, l, projectile, speed.orElse(1.5F));
+				}
 			}
-			default -> {
+			sound.ifPresent(s -> play(p, l, s));
+			return true;
+		}
+	}
+
+	/** Run (or with {@code flat} false, fly) the way the player looks and hit everything in the 3 blocks ahead. */
+	private record Charge(double speed, Optional<Float> damage, double knockback, boolean flat, Optional<SoundEvent> sound) implements Action {
+		static final MapCodec<Charge> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			Codec.DOUBLE.optionalFieldOf("speed", 1.5).forGetter(Charge::speed),
+			ExtraCodecs.NON_NEGATIVE_FLOAT.optionalFieldOf("damage").forGetter(Charge::damage),
+			Codec.DOUBLE.optionalFieldOf("knockback", 1.0).forGetter(Charge::knockback),
+			Codec.BOOL.optionalFieldOf("flat", true).forGetter(Charge::flat),
+			SOUND.optionalFieldOf("sound").forGetter(Charge::sound)
+		).apply(i, Charge::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			Vec3 direction;
+			if (flat) {
+				// Along the ground with a little hop.
+				Vec3 look = flatLook(p);
+				direction = new Vec3(look.x, 0.2 / speed, look.z);
+			} else {
+				direction = p.getLookAngle();
 			}
+			setMotion(p, direction.scale(speed));
+			Vec3 ahead = direction.normalize();
+			AABB front = p.getBoundingBox().expandTowards(ahead.scale(3)).inflate(0.5);
+			float hurt = damage.orElseGet(() -> attackDamage(p));
+			for (Entity e : l.getEntities(p, front, e -> e instanceof LivingEntity && e.isAlive())) {
+				LivingEntity living = (LivingEntity) e;
+				living.hurtServer(l, p.damageSources().mobAttack(p), hurt);
+				knock(living, ahead.x * knockback, 0.4, ahead.z * knockback);
+			}
+			sound.ifPresent(s -> play(p, l, s));
+			return true;
+		}
+	}
+
+	/**
+	 * Jump forward from the ground. With {@code at_target}, at what the player is looking at (like LeapAtTargetGoal),
+	 * otherwise straight ahead. Without a sound, the mob's own voice.
+	 */
+	private record Leap(double forward, double up, boolean atTarget, Optional<SoundEvent> sound) implements Action {
+		static final MapCodec<Leap> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			Codec.DOUBLE.optionalFieldOf("forward", 1.0).forGetter(Leap::forward),
+			Codec.DOUBLE.optionalFieldOf("up", 0.45).forGetter(Leap::up),
+			Codec.BOOL.optionalFieldOf("at_target", false).forGetter(Leap::atTarget),
+			SOUND.optionalFieldOf("sound").forGetter(Leap::sound)
+		).apply(i, Leap::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			if (!p.onGround() && !p.isInWater()) {
+				return fail(p, "Must be on the ground");
+			}
+			LivingEntity target = atTarget ? target(p, 12) : null;
+			Vec3 dir = target == null ? flatLook(p) : new Vec3(target.getX() - p.getX(), 0, target.getZ() - p.getZ());
+			dir = dir.lengthSqr() > 1.0E-7 ? dir.normalize() : flatLook(p);
+			setMotion(p, new Vec3(dir.x * forward, up, dir.z * forward));
+			return sound.isPresent() ? play(p, l, sound.get()) : voice(p, l);
+		}
+	}
+
+	/**
+	 * A burst of speed where the player looks, or along the ground with {@code flat} (plus {@code lift} upward).
+	 * {@code land_speed} and {@code land_sound} are used out of water; {@code needs_water} refuses on land.
+	 */
+	private record Dash(double speed, double lift, boolean flat, boolean needsWater, Optional<Double> landSpeed,
+		Optional<SoundEvent> sound, Optional<SoundEvent> landSound) implements Action {
+		static final MapCodec<Dash> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			Codec.DOUBLE.optionalFieldOf("speed", 1.8).forGetter(Dash::speed),
+			Codec.DOUBLE.optionalFieldOf("lift", 0.0).forGetter(Dash::lift),
+			Codec.BOOL.optionalFieldOf("flat", false).forGetter(Dash::flat),
+			Codec.BOOL.optionalFieldOf("needs_water", false).forGetter(Dash::needsWater),
+			Codec.DOUBLE.optionalFieldOf("land_speed").forGetter(Dash::landSpeed),
+			SOUND.optionalFieldOf("sound").forGetter(Dash::sound),
+			SOUND.optionalFieldOf("land_sound").forGetter(Dash::landSound)
+		).apply(i, Dash::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			boolean wet = p.isInWater();
+			if (needsWater && !wet) {
+				return fail(p, "Only in water");
+			}
+			double s = wet ? speed : landSpeed.orElse(speed);
+			setMotion(p, flat ? flatLook(p).scale(s).add(0, lift, 0) : p.getLookAngle().scale(s));
+			(wet ? sound : landSound.or(() -> sound)).ifPresent(sound -> play(p, l, sound));
+			return true;
+		}
+	}
+
+	/** The enderman's: to the block looked at within {@code range}, or somewhere random nearby. */
+	private record Teleport(double range) implements Action {
+		static final MapCodec<Teleport> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			Codec.DOUBLE.optionalFieldOf("range", 32.0).forGetter(Teleport::range)
+		).apply(i, Teleport::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			return enderTeleport(p, l, range);
+		}
+	}
+
+	/** Like a creeper: smoke for {@code fuse} ticks, then a blast the player survives. */
+	private record Explode(float power, int fuse, boolean fire, Optional<SoundEvent> sound) implements Action {
+		static final MapCodec<Explode> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			ExtraCodecs.POSITIVE_FLOAT.optionalFieldOf("power", 3.0F).forGetter(Explode::power),
+			ExtraCodecs.NON_NEGATIVE_INT.optionalFieldOf("fuse", 30).forGetter(Explode::fuse),
+			Codec.BOOL.optionalFieldOf("fire", false).forGetter(Explode::fire),
+			SOUND.optionalFieldOf("sound").forGetter(Explode::sound)
+		).apply(i, Explode::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			later(p, fuse, this::blast, player -> player.level().sendParticles(ParticleTypes.SMOKE,
+				player.getX(), player.getY() + 1, player.getZ(), 4, 0.3, 0.5, 0.3, 0.01));
+			sound.ifPresent(s -> play(p, l, s));
+			return true;
+		}
+
+		private void blast(ServerPlayer player) {
+			player.level().explode(player, null, new ExplosionDamageCalculator() {
+				@Override
+				public boolean shouldDamageEntity(Explosion explosion, Entity entity) {
+					return entity != player;
+				}
+			}, player.position(), power, fire, Level.ExplosionInteraction.MOB);
+		}
+	}
+
+	/**
+	 * Everything living within {@code radius} takes {@code damage}, is pushed away by {@code knockback} and gets
+	 * {@code target_effects}; the player gets {@code self_effects}. A radius of 0 touches only the player.
+	 */
+	private record Burst(double radius, float damage, double knockback, List<MobEffectInstance> targetEffects,
+		List<MobEffectInstance> selfEffects, Optional<SimpleParticleType> particle, Optional<SoundEvent> sound) implements Action {
+		private static final Codec<SimpleParticleType> PARTICLE = BuiltInRegistries.PARTICLE_TYPE.byNameCodec().comapFlatMap(
+			type -> type instanceof SimpleParticleType simple ? DataResult.success(simple)
+				: DataResult.error(() -> BuiltInRegistries.PARTICLE_TYPE.getKey(type) + " needs settings, pick a plain particle"),
+			simple -> simple);
+		static final MapCodec<Burst> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			Codec.DOUBLE.optionalFieldOf("radius", 0.0).forGetter(Burst::radius),
+			ExtraCodecs.NON_NEGATIVE_FLOAT.optionalFieldOf("damage", 0.0F).forGetter(Burst::damage),
+			Codec.DOUBLE.optionalFieldOf("knockback", 0.0).forGetter(Burst::knockback),
+			EFFECTS.optionalFieldOf("target_effects", List.of()).forGetter(Burst::targetEffects),
+			EFFECTS.optionalFieldOf("self_effects", List.of()).forGetter(Burst::selfEffects),
+			PARTICLE.optionalFieldOf("particle").forGetter(Burst::particle),
+			SOUND.optionalFieldOf("sound").forGetter(Burst::sound)
+		).apply(i, Burst::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			if (radius > 0) {
+				for (LivingEntity e : nearby(p, l, radius)) {
+					for (MobEffectInstance effect : targetEffects) {
+						e.addEffect(new MobEffectInstance(effect), p);
+					}
+					if (damage > 0) {
+						e.hurtServer(l, p.damageSources().mobAttack(p), damage);
+					}
+					if (knockback > 0) {
+						Vec3 away = e.position().subtract(p.position()).normalize();
+						knock(e, away.x * knockback, 0.3, away.z * knockback);
+					}
+				}
+			}
+			for (MobEffectInstance effect : selfEffects) {
+				p.addEffect(new MobEffectInstance(effect));
+			}
+			particle.ifPresent(type -> {
+				double spread = Math.max(0.6, Math.min(radius * 0.4, 2.0));
+				l.sendParticles(type, p.getX(), p.getY() + p.getBbHeight() / 2, p.getZ(), 40, spread, 0.6, spread, 0.05);
+			});
+			sound.ifPresent(s -> play(p, l, s));
+			return true;
+		}
+	}
+
+	/** A guardian's beam: hits what the player is looking at within {@code range}, with optional effects. */
+	private record Laser(float damage, double range, List<MobEffectInstance> effects, Optional<SoundEvent> sound) implements Action {
+		static final MapCodec<Laser> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			ExtraCodecs.NON_NEGATIVE_FLOAT.optionalFieldOf("damage", 6.0F).forGetter(Laser::damage),
+			Codec.DOUBLE.optionalFieldOf("range", 16.0).forGetter(Laser::range),
+			EFFECTS.optionalFieldOf("effects", List.of()).forGetter(Laser::effects),
+			SOUND.optionalFieldOf("sound").forGetter(Laser::sound)
+		).apply(i, Laser::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			LivingEntity target = target(p, range);
+			if (target == null) {
+				return fail(p, "No target in sight");
+			}
+			Vec3 from = p.getEyePosition();
+			Vec3 to = target.getEyePosition();
+			for (int n = 0; n <= 16; n++) {
+				Vec3 at = from.lerp(to, n / 16.0);
+				l.sendParticles(ParticleTypes.BUBBLE, at.x, at.y, at.z, 2, 0.05, 0.05, 0.05, 0);
+			}
+			target.hurtServer(l, l.damageSources().indirectMagic(p, p), damage);
+			for (MobEffectInstance effect : effects) {
+				target.addEffect(new MobEffectInstance(effect), p);
+			}
+			return play(p, l, sound.orElse(SoundEvents.GUARDIAN_ATTACK));
+		}
+	}
+
+	/** Damage what's in reach and throw it into the air (Hoglin.throwTarget). Damage defaults to the mob's attack. */
+	private record Toss(Optional<Float> damage, double reach, Optional<SoundEvent> sound) implements Action {
+		static final MapCodec<Toss> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			ExtraCodecs.NON_NEGATIVE_FLOAT.optionalFieldOf("damage").forGetter(Toss::damage),
+			Codec.DOUBLE.optionalFieldOf("reach", 4.0).forGetter(Toss::reach),
+			SOUND.optionalFieldOf("sound").forGetter(Toss::sound)
+		).apply(i, Toss::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			LivingEntity target = target(p, reach);
+			if (target == null) {
+				return fail(p, "Nothing in reach");
+			}
+			target.hurtServer(l, p.damageSources().mobAttack(p), damage.orElseGet(() -> attackDamage(p)));
+			knock(target, 0, 0.8, 0);
+			sound.ifPresent(s -> play(p, l, s));
+			return true;
+		}
+	}
+
+	/** Drops an item at the player's feet, like a chicken laying an egg. */
+	private record DropItem(Item item, Optional<SoundEvent> sound) implements Action {
+		static final MapCodec<DropItem> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			BuiltInRegistries.ITEM.byNameCodec().fieldOf("item").forGetter(DropItem::item),
+			SOUND.optionalFieldOf("sound").forGetter(DropItem::sound)
+		).apply(i, DropItem::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			ItemEntity drop = new ItemEntity(l, p.getX(), p.getY(), p.getZ(), new ItemStack(item));
+			drop.setDefaultPickUpDelay(); // laid on the ground, not straight into the pocket
+			l.addFreshEntity(drop);
+			sound.ifPresent(s -> play(p, l, s));
+			return true;
+		}
+	}
+
+	/** Digs up a loot table from the block underfoot, if it's one of {@code blocks}, like a sniffer. */
+	private record Dig(ResourceKey<LootTable> lootTable, TagKey<Block> blocks, Optional<SoundEvent> sound) implements Action {
+		static final MapCodec<Dig> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+			LootTable.KEY_CODEC.optionalFieldOf("loot_table", BuiltInLootTables.SNIFFER_DIGGING).forGetter(Dig::lootTable),
+			TagKey.hashedCodec(Registries.BLOCK).optionalFieldOf("blocks", BlockTags.SNIFFER_DIGGABLE_BLOCK).forGetter(Dig::blocks),
+			SOUND.optionalFieldOf("sound").forGetter(Dig::sound)
+		).apply(i, Dig::new));
+
+		@Override
+		public boolean use(ServerPlayer p, ServerLevel l) {
+			BlockPos below = p.blockPosition().below();
+			if (!l.getBlockState(below).is(blocks)) {
+				return fail(p, "Nothing to dig here");
+			}
+			p.dropFromGiftLootTable(l, lootTable, (level, stack) -> {
+				ItemEntity found = new ItemEntity(level, p.getX(), p.getY() + 0.2, p.getZ(), stack);
+				found.setDefaultPickUpDelay();
+				level.addFreshEntity(found);
+			});
+			l.levelEvent(LevelEvent.PARTICLES_AND_SOUND_DESTROY_BLOCK, below, Block.getId(l.getBlockState(below)));
+			sound.ifPresent(s -> play(p, l, s));
+			return true;
 		}
 	}
 
 	// --- power helpers ---
 
-	private static boolean enderTeleport(ServerPlayer p, ServerLevel l) {
+	private static boolean enderTeleport(ServerPlayer p, ServerLevel l, double range) {
 		Vec3 eye = p.getEyePosition();
-		Vec3 end = eye.add(p.getLookAngle().scale(32));
+		Vec3 end = eye.add(p.getLookAngle().scale(range));
 		BlockHitResult hit = l.clip(new ClipContext(eye, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
 		Vec3 from = p.position();
 		boolean moved;
@@ -504,15 +715,15 @@ public final class MorphPowers {
 			moved = p.randomTeleport(end.x, end.y, end.z, true, BlockTags.ENDERMAN_DOES_NOT_TELEPORT_TO);
 		}
 		if (!moved) {
-			moved = p.randomTeleport(p.getX() + (p.getRandom().nextDouble() - 0.5) * 32, p.getY() + p.getRandom().nextInt(16) - 8,
-				p.getZ() + (p.getRandom().nextDouble() - 0.5) * 32, true, BlockTags.ENDERMAN_DOES_NOT_TELEPORT_TO);
+			moved = p.randomTeleport(p.getX() + (p.getRandom().nextDouble() - 0.5) * range, p.getY() + p.getRandom().nextInt(16) - 8,
+				p.getZ() + (p.getRandom().nextDouble() - 0.5) * range, true, BlockTags.ENDERMAN_DOES_NOT_TELEPORT_TO);
 		}
 		if (!moved) {
 			return fail(p, "Nowhere to teleport");
 		}
 		p.resetFallDistance();
 		l.playSound(null, from.x, from.y, from.z, SoundEvents.ENDERMAN_TELEPORT, SoundSource.PLAYERS, 1.0F, 1.0F);
-		return sound(p, l, SoundEvents.ENDERMAN_TELEPORT);
+		return play(p, l, SoundEvents.ENDERMAN_TELEPORT);
 	}
 
 	/** Fires along wherever the player is looking now, so they can aim during the wind-up. */
@@ -533,84 +744,7 @@ public final class MorphPowers {
 				knock(living, look.x * 2.5, 0.5, look.z * 2.5);
 			}
 		}
-		sound(p, l, SoundEvents.WARDEN_SONIC_BOOM);
-	}
-
-	private static boolean laser(ServerPlayer p, ServerLevel l, float damage, boolean fatigue) {
-		LivingEntity target = target(p, 16);
-		if (target == null) {
-			return fail(p, "No target in sight");
-		}
-		Vec3 from = p.getEyePosition();
-		Vec3 to = target.getEyePosition();
-		for (int i = 0; i <= 16; i++) {
-			Vec3 at = from.lerp(to, i / 16.0);
-			l.sendParticles(ParticleTypes.BUBBLE, at.x, at.y, at.z, 2, 0.05, 0.05, 0.05, 0);
-		}
-		target.hurtServer(l, l.damageSources().indirectMagic(p, p), damage);
-		if (fatigue) {
-			target.addEffect(new MobEffectInstance(MobEffects.MINING_FATIGUE, 1200, 2), p);
-		}
-		return sound(p, l, SoundEvents.GUARDIAN_ATTACK);
-	}
-
-	private static boolean nautilusDash(ServerPlayer p, ServerLevel l, SoundEvent inWater, SoundEvent onLand) {
-		setMotion(p, p.getLookAngle().scale(p.isInWater() ? 1.8 : 0.75));
-		return sound(p, l, p.isInWater() ? inWater : onLand);
-	}
-
-	private static boolean ink(ServerPlayer p, ServerLevel l, SoundEvent sound) {
-		for (LivingEntity e : nearby(p, l, 5.0)) {
-			e.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, 100, 0), p);
-		}
-		l.sendParticles(ParticleTypes.SQUID_INK, p.getX(), p.getY() + 0.5, p.getZ(), 60, 1.2, 1.2, 1.2, 0.05);
-		p.addEffect(new MobEffectInstance(MobEffects.SPEED, 60, 1));
-		return sound(p, l, sound);
-	}
-
-	/** Ground charge: run forward with a little hop. */
-	private static boolean charge(ServerPlayer p, ServerLevel l, double speed, float damage, double knockback, SoundEvent sound) {
-		Vec3 look = flatLook(p);
-		return charge(p, l, new Vec3(look.x, 0.2 / speed, look.z), speed, damage, knockback, sound);
-	}
-
-	/** Move along `direction` and hit everything in the 3 blocks ahead. */
-	private static boolean charge(ServerPlayer p, ServerLevel l, Vec3 direction, double speed, float damage, double knockback, SoundEvent sound) {
-		setMotion(p, direction.scale(speed));
-		Vec3 ahead = direction.normalize();
-		AABB front = p.getBoundingBox().expandTowards(ahead.scale(3)).inflate(0.5);
-		for (Entity e : l.getEntities(p, front, e -> e instanceof LivingEntity && e.isAlive())) {
-			LivingEntity living = (LivingEntity) e;
-			living.hurtServer(l, p.damageSources().mobAttack(p), damage);
-			knock(living, ahead.x * knockback, 0.4, ahead.z * knockback);
-		}
-		return sound(p, l, sound);
-	}
-
-	/**
-	 * Jump forward from the ground. With `atTarget`, aim the jump at what the player is looking at (like
-	 * LeapAtTargetGoal), otherwise straight ahead. Plays the mob's own voice.
-	 */
-	private static boolean leap(ServerPlayer p, ServerLevel l, double forward, double up, boolean atTarget) {
-		if (!p.onGround() && !p.isInWater()) {
-			return fail(p, "Must be on the ground");
-		}
-		LivingEntity target = atTarget ? target(p, 12) : null;
-		Vec3 dir = target == null ? flatLook(p) : new Vec3(target.getX() - p.getX(), 0, target.getZ() - p.getZ());
-		dir = dir.lengthSqr() > 1.0E-7 ? dir.normalize() : flatLook(p);
-		setMotion(p, new Vec3(dir.x * forward, up, dir.z * forward));
-		return voice(p, l);
-	}
-
-	/** Damage what's in reach and throw it into the air. */
-	private static boolean toss(ServerPlayer p, ServerLevel l, float damage, SoundEvent sound) {
-		LivingEntity target = target(p, 4);
-		if (target == null) {
-			return fail(p, "Nothing in reach");
-		}
-		target.hurtServer(l, p.damageSources().mobAttack(p), damage);
-		knock(target, 0, 0.8, 0);
-		return sound(p, l, sound);
+		play(p, l, SoundEvents.WARDEN_SONIC_BOOM);
 	}
 
 	/** The morph's melee damage (MorphState sets it from the mob's attribute). */
@@ -623,23 +757,9 @@ public final class MorphPowers {
 		EntityType<?> type = MorphState.current(p);
 		SoundEvent sound = type != null && MorphTemplates.get(type, l) instanceof MobAccessor mob ? mob.morph$ambientSound() : null;
 		if (sound != null) {
-			sound(p, l, sound);
+			play(p, l, sound);
 		}
 		return true;
-	}
-
-	private static boolean arrow(ServerPlayer p, ServerLevel l, @Nullable MobEffectInstance effect) {
-		return arrow(p, l, effect, 2.5F, SoundEvents.SKELETON_SHOOT);
-	}
-
-	private static boolean arrow(ServerPlayer p, ServerLevel l, @Nullable MobEffectInstance effect, float velocity, SoundEvent sound) {
-		Arrow arrow = new Arrow(l, p, new ItemStack(Items.ARROW), null);
-		arrow.pickup = AbstractArrow.Pickup.CREATIVE_ONLY;
-		if (effect != null) {
-			arrow.addEffect(effect);
-		}
-		throwItem(p, l, arrow, velocity);
-		return sound(p, l, sound);
 	}
 
 	/** Push an entity. Players move themselves, so they must be told about the new velocity directly. */
@@ -706,7 +826,7 @@ public final class MorphPowers {
 		return l.getEntitiesOfClass(LivingEntity.class, p.getBoundingBox().inflate(radius), e -> e != p && e.isAlive());
 	}
 
-	private static boolean sound(ServerPlayer p, ServerLevel l, SoundEvent sound) {
+	private static boolean play(ServerPlayer p, ServerLevel l, SoundEvent sound) {
 		l.playSound(null, p.getX(), p.getY(), p.getZ(), sound, SoundSource.PLAYERS, 1.0F, 1.0F);
 		return true;
 	}

@@ -44,7 +44,7 @@ abstract class LivingEntityMixin {
 
 	private boolean morph$glides() {
 		EntityType<?> type = morph$type();
-		return type != null && MorphAbilities.of(type).contains(MorphAbilities.Ability.GLIDE);
+		return type != null && MorphAbilities.of(type, ((LivingEntity) (Object) this).level()).contains(MorphAbilities.Ability.GLIDE);
 	}
 
 	/** Phantom morphs glide like an elytra wearer, without the elytra: same rules for when (in the air, not riding). */
@@ -87,7 +87,7 @@ abstract class LivingEntityMixin {
 	private void morph$climbWalls(CallbackInfoReturnable<Boolean> cir) {
 		EntityType<?> type = morph$type();
 		if (type != null && ((Player) (Object) this).horizontalCollision && !((Player) (Object) this).isSpectator()
-			&& MorphAbilities.of(type).contains(MorphAbilities.Ability.CLIMB)) {
+			&& MorphAbilities.of(type, ((LivingEntity) (Object) this).level()).contains(MorphAbilities.Ability.CLIMB)) {
 			cir.setReturnValue(true);
 		}
 	}
@@ -118,7 +118,7 @@ abstract class LivingEntityMixin {
 
 	private boolean morph$lavaWalker() {
 		EntityType<?> type = morph$type();
-		return type != null && MorphAbilities.of(type).contains(MorphAbilities.Ability.LAVA_WALK);
+		return type != null && MorphAbilities.of(type, ((LivingEntity) (Object) this).level()).contains(MorphAbilities.Ability.LAVA_WALK);
 	}
 
 	/**

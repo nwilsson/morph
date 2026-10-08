@@ -1,0 +1,15 @@
+{
+	"abilities": [
+		"water_breathing",
+		"swim"
+	],
+	"power": {
+		"type": "morph:dash",
+		"name": "Dash",
+		"cooldown": 40,
+		"speed": 1.8,
+		"land_speed": 0.75,
+		"sound": "minecraft:entity.zombie_nautilus.dash",
+		"land_sound": "minecraft:entity.zombie_nautilus.dash_land"
+	}
+}

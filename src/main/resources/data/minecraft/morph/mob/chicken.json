@@ -1,0 +1,12 @@
+{
+	"abilities": [
+		"slow_fall"
+	],
+	"power": {
+		"type": "morph:drop_item",
+		"name": "Lay egg",
+		"cooldown": 600,
+		"item": "minecraft:egg",
+		"sound": "minecraft:entity.chicken.egg"
+	}
+}

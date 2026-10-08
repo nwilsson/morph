@@ -1,0 +1,14 @@
+{
+	"abilities": [
+		"jump"
+	],
+	"power": {
+		"type": "morph:charge",
+		"name": "Ram",
+		"cooldown": 60,
+		"speed": 1.6,
+		"damage": 4.0,
+		"knockback": 2.5,
+		"sound": "minecraft:entity.goat.ram_impact"
+	}
+}

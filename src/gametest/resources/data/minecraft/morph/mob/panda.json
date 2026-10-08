@@ -1,0 +1,16 @@
+{
+	"abilities": [
+		"climb",
+		"night_vision"
+	],
+	"power": {
+		"type": "morph:projectile",
+		"name": "Test snowball",
+		"cooldown": 7,
+		"entity": "minecraft:snowball",
+		"speed": 1.5
+	},
+	"on_hit": {
+		"fire_seconds": 2
+	}
+}

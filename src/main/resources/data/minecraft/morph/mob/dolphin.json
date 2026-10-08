@@ -1,0 +1,14 @@
+{
+	"abilities": [
+		"water_breathing",
+		"swim"
+	],
+	"power": {
+		"type": "morph:dash",
+		"name": "Dash",
+		"cooldown": 40,
+		"speed": 1.8,
+		"needs_water": true,
+		"sound": "minecraft:entity.dolphin.jump"
+	}
+}

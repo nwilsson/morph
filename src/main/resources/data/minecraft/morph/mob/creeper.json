@@ -1,0 +1,7 @@
+{
+	"power": {
+		"type": "morph:explode",
+		"fuse": 30,
+		"sound": "minecraft:entity.creeper.primed"
+	}
+}

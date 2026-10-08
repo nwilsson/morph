@@ -4,6 +4,7 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.DynamicCommandExceptionType;
+import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -32,6 +33,11 @@ public final class MorphCommands {
 		type -> Component.literal("You haven't unlocked " + type + " yet. Kill one first."));
 	private static final DynamicCommandExceptionType CANNOT_MORPH = new DynamicCommandExceptionType(
 		type -> Component.literal("Can't morph into " + type + "."));
+
+	private static final SimpleCommandExceptionType STOPPED = new SimpleCommandExceptionType(
+		Component.literal("Something is stopping you changing body."));
+	private static final SimpleCommandExceptionType UNLOCK_STOPPED = new SimpleCommandExceptionType(
+		Component.literal("Something is stopping that unlock."));
 
 	private MorphCommands() {}
 
@@ -64,7 +70,9 @@ public final class MorphCommands {
 					})
 					.executes(ctx -> morph(ctx, CompoundTagArgument.getCompoundTag(ctx, "nbt"))))));
 		dispatcher.register(Commands.literal("unmorph").executes(ctx -> {
-			MorphState.unmorph(ctx.getSource().getPlayerOrException());
+			if (!MorphState.unmorph(ctx.getSource().getPlayerOrException())) {
+				throw STOPPED.create();
+			}
 			ctx.getSource().sendSuccess(() -> Component.literal("You're yourself again."), false);
 			return 1;
 		}));
@@ -92,7 +100,9 @@ public final class MorphCommands {
 			if (!MorphState.isUnlocked(player, type)) {
 				throw NOT_UNLOCKED.create(id.getPath());
 			}
-			MorphState.morph(player, type);
+			if (!MorphState.morph(player, type)) {
+				throw STOPPED.create();
+			}
 		} else {
 			MorphVariant variant = MorphVariant.parse(type, nbt, player.level());
 			if (variant == null) {
@@ -102,7 +112,9 @@ public final class MorphCommands {
 				String look = variant.describe(player.level());
 				throw NOT_UNLOCKED.create(look.isEmpty() ? id.getPath() : id.getPath() + " (" + look + ")");
 			}
-			MorphState.morph(player, variant);
+			if (!MorphState.morph(player, variant)) {
+				throw STOPPED.create();
+			}
 		}
 		ctx.getSource().sendSuccess(() -> Component.literal("You are now a ").append(type.getDescription()).append("."), false);
 		return 1;
@@ -118,7 +130,9 @@ public final class MorphCommands {
 		if (variant == null) {
 			throw CANNOT_MORPH.create(BuiltInRegistries.ENTITY_TYPE.getKey(type));
 		}
-		MorphState.unlock(player, variant);
+		if (!MorphState.unlock(player, variant) && !MorphState.isUnlocked(player, variant)) {
+			throw UNLOCK_STOPPED.create();
+		}
 		String look = variant.describe(player.level());
 		ctx.getSource().sendSuccess(() -> Component.literal("Unlocked ").append(type.getDescription())
 			.append(look.isEmpty() ? "" : " (" + look + ")"), false);

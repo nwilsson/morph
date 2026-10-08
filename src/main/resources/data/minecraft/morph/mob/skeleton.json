@@ -1,0 +1,10 @@
+{
+	"power": {
+		"type": "morph:projectile",
+		"name": "Arrow",
+		"cooldown": 15,
+		"entity": "minecraft:arrow",
+		"speed": 2.5,
+		"sound": "minecraft:entity.skeleton.shoot"
+	}
+}

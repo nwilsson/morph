@@ -1,0 +1,6 @@
+{
+	"power": {
+		"type": "morph:dig",
+		"sound": "minecraft:entity.sniffer.drop_seed"
+	}
+}

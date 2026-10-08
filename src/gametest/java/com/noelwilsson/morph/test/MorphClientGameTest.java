@@ -403,9 +403,12 @@ public class MorphClientGameTest implements FabricClientGameTest {
 	/** The nautilus breathes and swims underwater and dashes like it does with a rider. */
 	private static void nautilus(ClientGameTestContext ctx, TestSingleplayerContext world) {
 		for (EntityType<?> type : List.of(EntityTypes.NAUTILUS, EntityTypes.ZOMBIE_NAUTILUS)) {
-			check(MorphAbilities.of(type).containsAll(Set.of(MorphAbilities.Ability.WATER_BREATHING, MorphAbilities.Ability.SWIM)),
-				type.toShortString() + ": abilities " + MorphAbilities.of(type));
-			check(MorphPowers.of(type) != null, type.toShortString() + ": no power");
+			// Asked on the client: the table reaches it from the server's data files.
+			Set<MorphAbilities.Ability> abilities = ctx.computeOnClient(mc -> MorphAbilities.of(type, mc.level));
+			check(abilities.containsAll(Set.of(MorphAbilities.Ability.WATER_BREATHING, MorphAbilities.Ability.SWIM)),
+				type.toShortString() + ": abilities " + abilities);
+			check(ctx.computeOnClient(mc -> MorphPowers.name(type, mc.level)) != null, type.toShortString() + ": no power on the client");
+			check(world.getServer().computeOnServer(server -> MorphPowers.of(type)) != null, type.toShortString() + ": no power");
 		}
 		world.getServer().runOnServer(server -> {
 			ServerPlayer player = world.getConnection().getServerPlayer();

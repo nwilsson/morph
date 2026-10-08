@@ -1,0 +1,13 @@
+{
+	"abilities": [
+		"fly"
+	],
+	"on_hit": {
+		"effects": [
+			{
+				"id": "minecraft:poison",
+				"duration": 200
+			}
+		]
+	}
+}

@@ -1,0 +1,14 @@
+{
+	"abilities": [
+		"fly"
+	],
+	"power": {
+		"type": "morph:charge",
+		"name": "Charge",
+		"cooldown": 40,
+		"speed": 1.4,
+		"knockback": 0.8,
+		"flat": false,
+		"sound": "minecraft:entity.vex.charge"
+	}
+}

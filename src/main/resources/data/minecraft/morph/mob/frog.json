@@ -1,0 +1,9 @@
+{
+	"abilities": [
+		"water_breathing",
+		"jump"
+	],
+	"power": {
+		"type": "morph:tongue"
+	}
+}

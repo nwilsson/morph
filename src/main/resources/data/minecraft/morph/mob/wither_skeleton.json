@@ -1,0 +1,10 @@
+{
+	"on_hit": {
+		"effects": [
+			{
+				"id": "minecraft:wither",
+				"duration": 200
+			}
+		]
+	}
+}

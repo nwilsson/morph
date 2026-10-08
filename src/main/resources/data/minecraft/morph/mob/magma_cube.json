@@ -1,0 +1,8 @@
+{
+	"abilities": [
+		"jump"
+	],
+	"on_hit": {
+		"fire_seconds": 5
+	}
+}

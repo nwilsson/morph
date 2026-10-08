@@ -1,0 +1,15 @@
+{
+	"abilities": [
+		"glide",
+		"night_vision"
+	],
+	"power": {
+		"type": "morph:charge",
+		"name": "Swoop",
+		"cooldown": 40,
+		"speed": 1.6,
+		"knockback": 1.0,
+		"flat": false,
+		"sound": "minecraft:entity.phantom.swoop"
+	}
+}

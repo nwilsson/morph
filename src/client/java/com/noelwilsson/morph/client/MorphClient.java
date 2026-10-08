@@ -100,7 +100,7 @@ public class MorphClient implements ClientModInitializer {
 		}
 		flap(minecraft);
 		while (USE_POWER.consumeClick()) {
-			if (minecraft.player != null && MorphPowers.of(MorphState.current(minecraft.player)) != null
+			if (minecraft.player != null && MorphPowers.name(MorphState.current(minecraft.player), minecraft.player.level()) != null
 				&& ClientPlayNetworking.canSend(MorphPowerPayload.TYPE)) {
 				ClientPlayNetworking.send(MorphPowerPayload.INSTANCE);
 			}

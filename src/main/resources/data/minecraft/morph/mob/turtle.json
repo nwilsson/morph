@@ -1,0 +1,23 @@
+{
+	"abilities": [
+		"water_breathing"
+	],
+	"power": {
+		"type": "morph:burst",
+		"name": "Shell",
+		"cooldown": 200,
+		"self_effects": [
+			{
+				"id": "minecraft:resistance",
+				"duration": 100,
+				"amplifier": 2
+			},
+			{
+				"id": "minecraft:slowness",
+				"duration": 100,
+				"amplifier": 2
+			}
+		],
+		"sound": "minecraft:item.armor.equip_turtle"
+	}
+}

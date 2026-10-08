@@ -1,0 +1,14 @@
+{
+	"abilities": [
+		"speed",
+		"jump"
+	],
+	"power": {
+		"type": "morph:leap",
+		"name": "Leap",
+		"cooldown": 40,
+		"forward": 1.2,
+		"up": 0.9,
+		"at_target": false
+	}
+}

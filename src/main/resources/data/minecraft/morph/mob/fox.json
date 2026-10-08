@@ -1,0 +1,14 @@
+{
+	"abilities": [
+		"speed",
+		"night_vision"
+	],
+	"power": {
+		"type": "morph:leap",
+		"name": "Pounce",
+		"cooldown": 40,
+		"forward": 0.8,
+		"up": 0.9,
+		"at_target": true
+	}
+}

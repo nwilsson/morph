@@ -1,0 +1,10 @@
+{
+	"power": {
+		"type": "morph:projectile",
+		"name": "Spit",
+		"cooldown": 20,
+		"entity": "minecraft:llama_spit",
+		"speed": 1.5,
+		"sound": "minecraft:entity.llama.spit"
+	}
+}

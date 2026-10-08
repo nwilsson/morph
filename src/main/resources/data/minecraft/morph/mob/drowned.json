@@ -1,0 +1,13 @@
+{
+	"abilities": [
+		"water_breathing"
+	],
+	"power": {
+		"type": "morph:projectile",
+		"name": "Trident",
+		"cooldown": 30,
+		"entity": "minecraft:trident",
+		"speed": 2.5,
+		"sound": "minecraft:entity.drowned.shoot"
+	}
+}

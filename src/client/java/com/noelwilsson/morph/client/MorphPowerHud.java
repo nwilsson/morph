@@ -19,7 +19,7 @@ public final class MorphPowerHud {
 		if (player == null || player.isSpectator()) {
 			return;
 		}
-		MorphPowers.Power power = MorphPowers.of(MorphState.current(player));
+		String power = MorphPowers.name(MorphState.current(player), player.level());
 		if (power == null) {
 			return;
 		}
@@ -32,7 +32,7 @@ public final class MorphPowerHud {
 		boolean ready = now >= readyAt || cooldown <= 0;
 
 		graphics.fill(x, y, x + WIDTH, y + 20, 0x90000000);
-		graphics.text(minecraft.font, minecraft.font.plainSubstrByWidth(key + power.name(), WIDTH - 6), x + 3, y + 3, ready ? 0xFFFFFFFF : 0xFFA0A0A0);
+		graphics.text(minecraft.font, minecraft.font.plainSubstrByWidth(key + power,WIDTH - 6), x + 3, y + 3, ready ? 0xFFFFFFFF : 0xFFA0A0A0);
 		float charged = ready ? 1.0F : 1.0F - (readyAt - now - delta.getGameTimeDeltaPartialTick(false)) / cooldown;
 		int barWidth = Math.round((WIDTH - 6) * Math.max(0.0F, Math.min(1.0F, charged)));
 		graphics.fill(x + 3, y + 14, x + WIDTH - 3, y + 17, 0xFF303030);

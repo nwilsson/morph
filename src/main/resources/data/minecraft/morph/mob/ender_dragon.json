@@ -1,0 +1,12 @@
+{
+	"abilities": [
+		"fly"
+	],
+	"power": {
+		"type": "morph:projectile",
+		"name": "Dragon's breath",
+		"cooldown": 60,
+		"entity": "minecraft:dragon_fireball",
+		"sound": "minecraft:entity.ender_dragon.shoot"
+	}
+}

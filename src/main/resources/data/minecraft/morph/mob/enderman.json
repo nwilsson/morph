@@ -1,0 +1,8 @@
+{
+	"abilities": [
+		"speed"
+	],
+	"power": {
+		"type": "morph:teleport"
+	}
+}

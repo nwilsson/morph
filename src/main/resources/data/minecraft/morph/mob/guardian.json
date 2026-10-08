@@ -1,0 +1,12 @@
+{
+	"abilities": [
+		"water_breathing",
+		"swim"
+	],
+	"power": {
+		"type": "morph:laser",
+		"name": "Laser",
+		"cooldown": 40,
+		"damage": 6.0
+	}
+}

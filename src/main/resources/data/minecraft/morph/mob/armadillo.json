@@ -1,0 +1,20 @@
+{
+	"power": {
+		"type": "morph:burst",
+		"name": "Roll up",
+		"cooldown": 200,
+		"self_effects": [
+			{
+				"id": "minecraft:resistance",
+				"duration": 100,
+				"amplifier": 3
+			},
+			{
+				"id": "minecraft:slowness",
+				"duration": 100,
+				"amplifier": 3
+			}
+		],
+		"sound": "minecraft:entity.armadillo.roll"
+	}
+}

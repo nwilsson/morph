@@ -1,0 +1,29 @@
+{
+	"abilities": [
+		"water_breathing",
+		"swim",
+		"dries_out",
+		"night_vision"
+	],
+	"power": {
+		"type": "morph:burst",
+		"name": "Ink cloud",
+		"cooldown": 100,
+		"radius": 5.0,
+		"target_effects": [
+			{
+				"id": "minecraft:blindness",
+				"duration": 100
+			}
+		],
+		"self_effects": [
+			{
+				"id": "minecraft:speed",
+				"duration": 60,
+				"amplifier": 1
+			}
+		],
+		"particle": "minecraft:glow_squid_ink",
+		"sound": "minecraft:entity.glow_squid.squirt"
+	}
+}

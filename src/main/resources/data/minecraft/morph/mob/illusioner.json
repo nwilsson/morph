@@ -1,0 +1,22 @@
+{
+	"power": {
+		"type": "morph:burst",
+		"name": "Mirror image",
+		"cooldown": 200,
+		"radius": 8.0,
+		"target_effects": [
+			{
+				"id": "minecraft:blindness",
+				"duration": 100
+			}
+		],
+		"self_effects": [
+			{
+				"id": "minecraft:invisibility",
+				"duration": 100
+			}
+		],
+		"particle": "minecraft:cloud",
+		"sound": "minecraft:entity.illusioner.mirror_move"
+	}
+}

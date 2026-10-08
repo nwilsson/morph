@@ -1,0 +1,16 @@
+{
+	"power": {
+		"type": "morph:projectile",
+		"name": "Poison arrow",
+		"cooldown": 15,
+		"entity": "minecraft:arrow",
+		"speed": 2.5,
+		"effects": [
+			{
+				"id": "minecraft:poison",
+				"duration": 100
+			}
+		],
+		"sound": "minecraft:entity.skeleton.shoot"
+	}
+}

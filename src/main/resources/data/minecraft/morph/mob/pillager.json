@@ -1,0 +1,10 @@
+{
+	"power": {
+		"type": "morph:projectile",
+		"name": "Crossbow",
+		"cooldown": 25,
+		"entity": "minecraft:arrow",
+		"speed": 3.15,
+		"sound": "minecraft:item.crossbow.shoot"
+	}
+}

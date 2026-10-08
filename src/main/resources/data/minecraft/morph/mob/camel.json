@@ -1,0 +1,14 @@
+{
+	"abilities": [
+		"speed"
+	],
+	"power": {
+		"type": "morph:dash",
+		"name": "Dash",
+		"cooldown": 60,
+		"speed": 2.2,
+		"lift": 0.5,
+		"flat": true,
+		"sound": "minecraft:entity.camel.dash"
+	}
+}

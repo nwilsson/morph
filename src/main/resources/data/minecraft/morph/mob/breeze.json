@@ -1,0 +1,13 @@
+{
+	"abilities": [
+		"jump"
+	],
+	"power": {
+		"type": "morph:projectile",
+		"name": "Wind charge",
+		"cooldown": 20,
+		"entity": "minecraft:wind_charge",
+		"speed": 1.5,
+		"sound": "minecraft:entity.breeze.shoot"
+	}
+}

@@ -1,0 +1,10 @@
+{
+	"power": {
+		"type": "morph:projectile",
+		"name": "Snowball",
+		"cooldown": 5,
+		"entity": "minecraft:snowball",
+		"speed": 1.6,
+		"sound": "minecraft:entity.snow_golem.shoot"
+	}
+}

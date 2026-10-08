@@ -1,0 +1,18 @@
+{
+	"abilities": [
+		"water_breathing",
+		"swim"
+	],
+	"power": {
+		"type": "morph:burst",
+		"name": "Play dead",
+		"cooldown": 1200,
+		"self_effects": [
+			{
+				"id": "minecraft:regeneration",
+				"duration": 200
+			}
+		],
+		"sound": "minecraft:entity.axolotl.attack"
+	}
+}

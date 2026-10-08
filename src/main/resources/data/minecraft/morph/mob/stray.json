@@ -1,0 +1,16 @@
+{
+	"power": {
+		"type": "morph:projectile",
+		"name": "Frost arrow",
+		"cooldown": 15,
+		"entity": "minecraft:arrow",
+		"speed": 2.5,
+		"effects": [
+			{
+				"id": "minecraft:slowness",
+				"duration": 600
+			}
+		],
+		"sound": "minecraft:entity.skeleton.shoot"
+	}
+}

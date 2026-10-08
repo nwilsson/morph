@@ -152,22 +152,25 @@ public final class MorphState {
 		return added;
 	}
 
-	/**
-	 * The toggle key: morphed, go back to yourself; yourself, become the last mob you were. Returns false if there is
-	 * nothing to go back to (never morphed, or that morph is locked or blocked now).
-	 */
-	public static boolean toggle(ServerPlayer player) {
+	public enum ToggleResult {
+		CHANGED,
+		/** Never morphed, or the last morph is locked or blocked now. */
+		NOTHING_TO_GO_BACK_TO,
+		/** Another mod said no (MorphEvents.ALLOW_MORPH). */
+		STOPPED
+	}
+
+	/** The toggle key: morphed, go back to yourself; yourself, become the last mob you were. */
+	public static ToggleResult toggle(ServerPlayer player) {
 		if (player.getAttached(CURRENT) != null) {
-			unmorph(player);
-			return true;
+			return unmorph(player) ? ToggleResult.CHANGED : ToggleResult.STOPPED;
 		}
 		MorphVariant last = player.getAttached(LAST);
 		EntityType<?> type = last == null ? null : last.type();
 		if (type == null || !canMorphInto(type) || !isUnlocked(player, last)) {
-			return false;
+			return ToggleResult.NOTHING_TO_GO_BACK_TO;
 		}
-		morph(player, last);
-		return true;
+		return morph(player, last) ? ToggleResult.CHANGED : ToggleResult.STOPPED;
 	}
 
 	/** Unlocks the mob's default look. Returns true if this is a new unlock. */
@@ -175,10 +178,10 @@ public final class MorphState {
 		return unlock(player, MorphVariant.of(type));
 	}
 
-	/** Returns true if this is a new unlock. */
+	/** Returns true if this is a new unlock: false if the player had it, or a MorphEvents.ALLOW_UNLOCK listener said no. */
 	public static boolean unlock(ServerPlayer player, MorphVariant variant) {
 		List<MorphVariant> unlocked = player.getAttachedOrCreate(UNLOCKED);
-		if (unlocked.contains(variant)) {
+		if (unlocked.contains(variant) || !MorphEvents.ALLOW_UNLOCK.invoker().allowUnlock(player, variant)) {
 			return false;
 		}
 		List<MorphVariant> updated = new ArrayList<>(unlocked);
@@ -189,6 +192,7 @@ public final class MorphState {
 			clearKills(player, type);
 		}
 		MorphProgress.update(player);
+		MorphEvents.AFTER_UNLOCK.invoker().afterUnlock(player, variant);
 		return true;
 	}
 
@@ -207,12 +211,17 @@ public final class MorphState {
 		return player.getAttachedOrElse(UNLOCKED, List.<MorphVariant>of()).stream().filter(variant -> variant.id().equals(id)).toList();
 	}
 
-	/** Morphs into the first unlocked look of this mob, or its default look. */
-	public static void morph(ServerPlayer player, EntityType<?> type) {
-		morph(player, unlocked(player, type).stream().findFirst().orElseGet(() -> MorphVariant.of(type)));
+	/** Morphs into the first unlocked look of this mob, or its default look. False if another mod stopped it. */
+	public static boolean morph(ServerPlayer player, EntityType<?> type) {
+		return morph(player, unlocked(player, type).stream().findFirst().orElseGet(() -> MorphVariant.of(type)));
 	}
 
-	public static void morph(ServerPlayer player, MorphVariant variant) {
+	/** False if a MorphEvents.ALLOW_MORPH listener stopped it. */
+	public static boolean morph(ServerPlayer player, MorphVariant variant) {
+		if (!MorphEvents.ALLOW_MORPH.invoker().allowMorph(player, variant)) {
+			return false;
+		}
+		MorphVariant from = player.getAttached(CURRENT);
 		double fraction = healthFraction(player);
 		float before = player.getHealth();
 		clearAbilities(player);
@@ -223,14 +232,30 @@ public final class MorphState {
 		apply(player);
 		setHealthFraction(player, fraction, before);
 		EntityType<?> type = variant.type();
-		if (type != null && MorphAbilities.of(type).contains(MorphAbilities.Ability.FLY) && !MorphRules.mayFly(player)
+		if (type != null && MorphAbilities.of(type, player.level()).contains(MorphAbilities.Ability.FLY) && !MorphRules.mayFly(player)
 			&& MorphRules.allowFlight(player.level())) {
 			player.sendOverlayMessage(Component.literal("You can't fly yet. By default, flying unlocks once you've been to the End."));
 		}
+		MorphEvents.AFTER_MORPH.invoker().afterMorph(player, from, variant);
+		return true;
 	}
 
-	public static void unmorph(ServerPlayer player) {
+	/** Back to the player's own body. False if a MorphEvents.ALLOW_MORPH listener stopped it. */
+	public static boolean unmorph(ServerPlayer player) {
 		if (player.getAttached(CURRENT) == null) {
+			return true;
+		}
+		if (!MorphEvents.ALLOW_MORPH.invoker().allowMorph(player, null)) {
+			return false;
+		}
+		forceUnmorph(player);
+		return true;
+	}
+
+	/** Back to the player's own body, whatever other mods say: for when the morph isn't allowed any more. */
+	private static void forceUnmorph(ServerPlayer player) {
+		MorphVariant from = player.getAttached(CURRENT);
+		if (from == null) {
 			return;
 		}
 		double fraction = healthFraction(player);
@@ -240,6 +265,7 @@ public final class MorphState {
 		MorphPowers.changedBody(player);
 		player.refreshDimensions();
 		setHealthFraction(player, fraction, before);
+		MorphEvents.AFTER_MORPH.invoker().afterMorph(player, from, null);
 	}
 
 	/**
@@ -271,7 +297,7 @@ public final class MorphState {
 		}
 		// A datapack can block a mob while someone is it (/reload): put them back in their own body.
 		if (!canMorphInto(type)) {
-			unmorph(player);
+			forceUnmorph(player);
 			player.sendSystemMessage(Component.literal("Morphing into ").append(type.getDescription()).append(" is turned off here."));
 			return;
 		}
@@ -288,7 +314,7 @@ public final class MorphState {
 			player.setHealth(player.getMaxHealth());
 		}
 
-		Set<MorphAbilities.Ability> abilities = MorphAbilities.of(type);
+		Set<MorphAbilities.Ability> abilities = MorphAbilities.of(type, player.level());
 		if (abilities.contains(MorphAbilities.Ability.SPEED)) {
 			setModifier(player, Attributes.MOVEMENT_SPEED, SPEED_MODIFIER, 0.3, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
 		}
@@ -340,7 +366,7 @@ public final class MorphState {
 				helmet.hurtAndBreak(player.getRandom().nextInt(2), player, EquipmentSlot.HEAD);
 			}
 		}
-		if (MorphAbilities.of(type).contains(MorphAbilities.Ability.DRIES_OUT) && !player.isInWater()) {
+		if (MorphAbilities.of(type, player.level()).contains(MorphAbilities.Ability.DRIES_OUT) && !player.isInWater()) {
 			// Vanilla refills 4 air a tick out of water; take 5 so a fish loses 1 a tick, like a real one.
 			int air = player.getAirSupply() - 5;
 			if (air <= -20) {

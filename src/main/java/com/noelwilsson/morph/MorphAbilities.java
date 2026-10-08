@@ -1,15 +1,19 @@
 package com.noelwilsson.morph;
 
+import com.mojang.serialization.Codec;
 import java.util.EnumSet;
-import java.util.Map;
+import java.util.Locale;
 import java.util.Set;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.Identifier;
+import net.minecraft.util.StringRepresentable;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.Level;
 
-/** What each mob's body lets the player do. Health and hitbox come from the mob itself; this is the rest. */
+/**
+ * What each mob's body lets the player do. Health and hitbox come from the mob itself; this is the rest. Which mob
+ * has which comes from its data file (see {@link MorphMobs}), plus fire immunity for any mob that is fire immune.
+ */
 public final class MorphAbilities {
-	public enum Ability {
+	public enum Ability implements StringRepresentable {
 		FLY,             // creative-style flight, no fall damage
 		GLIDE,           // elytra without an elytra: jump in the air to glide, jump again to flap
 		SLOW_FALL,       // flaps instead of falling
@@ -21,66 +25,25 @@ public final class MorphAbilities {
 		JUMP,
 		SPEED,
 		LAVA_WALK,       // strider
-		DRIES_OUT        // fish: suffocates out of water
-	}
+		DRIES_OUT;       // fish: suffocates out of water
 
-	private static final Map<String, Set<Ability>> TABLE = Map.ofEntries(
-		e("parrot", Ability.FLY),
-		e("bat", Ability.FLY, Ability.NIGHT_VISION),
-		e("bee", Ability.FLY),
-		e("allay", Ability.FLY),
-		e("vex", Ability.FLY),
-		e("phantom", Ability.GLIDE, Ability.NIGHT_VISION),
-		e("ghast", Ability.FLY),
-		e("happy_ghast", Ability.FLY),
-		e("blaze", Ability.FLY),
-		e("breeze", Ability.JUMP),
-		e("wither", Ability.FLY),
-		e("ender_dragon", Ability.FLY),
-		e("chicken", Ability.SLOW_FALL),
-		e("spider", Ability.CLIMB, Ability.NIGHT_VISION),
-		e("cave_spider", Ability.CLIMB, Ability.NIGHT_VISION),
-		e("cod", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
-		e("salmon", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
-		e("tropical_fish", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
-		e("pufferfish", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
-		e("tadpole", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
-		e("squid", Ability.WATER_BREATHING, Ability.SWIM, Ability.DRIES_OUT),
-		e("glow_squid", Ability.WATER_BREATHING, Ability.SWIM, Ability.NIGHT_VISION, Ability.DRIES_OUT),
-		e("strider", Ability.LAVA_WALK),
-		e("magma_cube", Ability.JUMP),
-		e("slime", Ability.JUMP),
-		e("dolphin", Ability.WATER_BREATHING, Ability.SWIM),
-		e("nautilus", Ability.WATER_BREATHING, Ability.SWIM),
-		e("zombie_nautilus", Ability.WATER_BREATHING, Ability.SWIM),
-		e("axolotl", Ability.WATER_BREATHING, Ability.SWIM),
-		e("guardian", Ability.WATER_BREATHING, Ability.SWIM),
-		e("elder_guardian", Ability.WATER_BREATHING, Ability.SWIM),
-		e("drowned", Ability.WATER_BREATHING),
-		e("turtle", Ability.WATER_BREATHING),
-		e("frog", Ability.WATER_BREATHING, Ability.JUMP),
-		e("rabbit", Ability.JUMP, Ability.SPEED),
-		e("goat", Ability.JUMP),
-		e("cat", Ability.SPEED, Ability.NIGHT_VISION),
-		e("ocelot", Ability.SPEED, Ability.NIGHT_VISION),
-		e("fox", Ability.SPEED, Ability.NIGHT_VISION),
-		e("wolf", Ability.SPEED),
-		e("horse", Ability.SPEED, Ability.JUMP),
-		e("camel", Ability.SPEED),
-		e("enderman", Ability.SPEED)
-	);
+		/** As written in data files: "fly", "night_vision". */
+		public static final Codec<Ability> CODEC = StringRepresentable.fromEnum(Ability::values);
+
+		@Override
+		public String getSerializedName() {
+			return name().toLowerCase(Locale.ROOT);
+		}
+	}
 
 	private MorphAbilities() {}
 
-	private static Map.Entry<String, Set<Ability>> e(String path, Ability... abilities) {
-		return Map.entry(path, Set.of(abilities));
-	}
-
-	public static Set<Ability> of(EntityType<?> type) {
-		Identifier id = BuiltInRegistries.ENTITY_TYPE.getKey(type);
+	/** A fresh set the caller may change. Works on both sides: clients get the table from the server. */
+	public static Set<Ability> of(EntityType<?> type, Level level) {
 		EnumSet<Ability> set = EnumSet.noneOf(Ability.class);
-		if ("minecraft".equals(id.getNamespace())) {
-			set.addAll(TABLE.getOrDefault(id.getPath(), Set.of()));
+		MorphMobs.Synced mob = MorphMobs.synced(type, level);
+		if (mob != null) {
+			set.addAll(mob.abilities());
 		}
 		if (type.fireImmune()) {
 			set.add(Ability.FIRE_IMMUNE);

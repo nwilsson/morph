@@ -17,6 +17,7 @@ A Fabric mod for Minecraft 26.3. Kill a mob to unlock it, then morph into it. Yo
 - **Favourites.** In the sidebar, press `F` or middle-click a morph to star it. Starred morphs go to the top of the list. Hold the backtick key to get a ring of them around the cursor, point at one and let go.
 - **Quick toggle.** Press `B` to go back to yourself, and again to become the last mob you were.
 - **Server settings.** Gamerules for how many kills unlock a morph, losing morphs on death, morphing on unlock, flight and how monsters treat you. Datapack tags to block mobs or their powers.
+- **Datapack-driven mobs.** Each mob's abilities, power and melee effects are a JSON file, so a datapack can rebalance any mob or give modded mobs abilities and powers. Other mods can hook into unlocks and morphs.
 
 ## Controls
 
@@ -71,6 +72,59 @@ For example, `data/morph/tags/entity_type/blocked.json`:
 	"values": ["minecraft:wither", "minecraft:ender_dragon"]
 }
 ```
+
+## Mob data files
+
+Each mob's abilities, power and melee effects come from `data/<namespace>/morph/mob/<mob>.json`, where `<namespace>:<mob>` is the mob's id. Morphed ships a file for every vanilla mob that has something, such as `data/minecraft/morph/mob/blaze.json`:
+
+```json
+{
+	"abilities": ["fly"],
+	"power": {
+		"type": "morph:projectile",
+		"name": "Fireballs",
+		"cooldown": 40,
+		"entity": "minecraft:small_fireball",
+		"count": 3,
+		"spread": 0.06,
+		"sound": "minecraft:entity.blaze.shoot"
+	},
+	"on_hit": {"fire_seconds": 5}
+}
+```
+
+A datapack with a file at the same path replaces the mob, and a file for a modded mob (`data/alexsmobs/morph/mob/kangaroo.json`) gives it abilities and a power. A file for a mob that isn't in the game is skipped, so modpacks can ship files for optional mods. Mobs without a file still get the body, health and fire immunity. `/reload` picks up changes.
+
+Every field is optional.
+
+- **`abilities`**: any of `fly`, `glide`, `slow_fall`, `water_breathing`, `swim`, `fire_immune`, `climb`, `night_vision`, `jump`, `speed`, `lava_walk` and `dries_out` (suffocates out of water). Fire-immune mobs get `fire_immune` without listing it.
+- **`power`**: a `type` from the table below and its settings, plus `name` (shown on the HUD) and `cooldown` (ticks). Both have a default for each type.
+- **`on_hit`**: what a melee hit does on top of its damage: `effects` (a list of effects, as in `/effect`: `{"id": "minecraft:poison", "duration": 200, "amplifier": 0}`), `fire_seconds`, and `launch` (upward push).
+
+| Power type | Settings |
+| --- | --- |
+| `morph:projectile` | `entity` (any projectile), `count`, `spread`, `speed`, `effects` (arrows only), `sound`. Fireballs and skulls fly straight where you look; anything else, or anything given a `speed`, is thrown. |
+| `morph:charge` | `speed`, `damage` (default: the mob's attack), `knockback`, `flat` (along the ground; `false` flies where you look), `sound` |
+| `morph:leap` | `forward`, `up`, `at_target` (jump at the mob you're looking at), `sound` (default: the mob's voice) |
+| `morph:dash` | `speed`, `lift`, `flat`, `needs_water`, `land_speed`, `sound`, `land_sound` |
+| `morph:teleport` | `range` |
+| `morph:explode` | `power`, `fuse` (ticks), `fire`, `sound`. You survive your own blast. |
+| `morph:burst` | `radius`, `damage`, `knockback`, `target_effects`, `self_effects`, `particle`, `sound`. Radius 0 only affects you. |
+| `morph:laser` | `damage`, `range`, `effects`, `sound` |
+| `morph:toss` | `damage` (default: the mob's attack), `reach`, `sound` |
+| `morph:drop_item` | `item`, `sound` |
+| `morph:dig` | `loot_table`, `blocks` (a block tag), `sound` |
+| `morph:homing_bullet`, `morph:splash_potion`, `morph:fangs`, `morph:sonic_boom`, `morph:tongue`, `morph:swipe`, `morph:graze` | None. The shulker's, witch's, evoker's, warden's, frog's, polar bear's and sheep's own moves. |
+
+## For mod developers
+
+`MorphEvents` has four server-side events. `ALLOW_UNLOCK` and `ALLOW_MORPH` can stop an unlock or a change of body by returning `false`; `AFTER_UNLOCK` and `AFTER_MORPH` report one. A body is a `MorphVariant`, or `null` for the player's own.
+
+```java
+MorphEvents.ALLOW_MORPH.register((player, to) -> to == null || !inArena(player));
+```
+
+`MorphPowers.registerType` adds a power type that data files can name. Call it from your mod initializer.
 
 ## Earning flight
 
